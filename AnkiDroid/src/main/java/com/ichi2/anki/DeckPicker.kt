@@ -142,6 +142,7 @@ import com.ichi2.anki.dialogs.setDeckPickerContextMenuResultListener
 import com.ichi2.anki.export.ExportDialogFragment
 import com.ichi2.anki.filtered.FilteredDeckOptionsFragment
 import com.ichi2.anki.halo.HaloDeckResetLog
+import com.ichi2.anki.halo.HaloDeckSortMode
 import com.ichi2.anki.halo.HaloDeckStatus
 import com.ichi2.anki.halo.HaloDeckStatusStore
 import com.ichi2.anki.introduction.CollectionPermissionScreenLauncher
@@ -862,6 +863,10 @@ open class DeckPicker :
                 Timber.i("ContextMenu: HALO organizer selected")
                 showHaloDeckOrganizerDialog()
             }
+            DeckPickerContextMenuOption.HALO_FAVORITE -> {
+                Timber.i("ContextMenu: HALO favorite toggled for deck %d", deckId)
+                toggleHaloFavorite(deckId)
+            }
             DeckPickerContextMenuOption.HALO_RESET_DECK -> {
                 Timber.i("ContextMenu: HALO reset deck selected for deck %d", deckId)
                 showHaloResetDeckScopeDialog(deckId)
@@ -1092,14 +1097,19 @@ open class DeckPicker :
     }
 
     private fun showHaloDeckOrganizerDialog() {
-        val options = arrayOf(
-            getString(R.string.halo_organize_bulk),
-            getString(R.string.halo_organize_undo),
-            getString(R.string.halo_organize_export),
-            getString(R.string.halo_organize_import),
-            getString(R.string.halo_organize_visual),
-            getString(R.string.halo_organize_clear),
-        )
+        val options =
+            arrayOf(
+                getString(R.string.halo_organize_bulk),
+                getString(R.string.halo_organize_undo),
+                getString(R.string.halo_organize_filter),
+                getString(R.string.halo_organize_sort),
+                getString(R.string.halo_organize_functional_visibility),
+                getString(R.string.halo_organize_cleanup),
+                getString(R.string.halo_organize_export),
+                getString(R.string.halo_organize_import),
+                getString(R.string.halo_organize_visual),
+                getString(R.string.halo_organize_clear),
+            )
         AlertDialog.Builder(this)
             .setTitle(R.string.halo_deck_organize)
             .setItems(options) { _, selected ->
@@ -1108,15 +1118,131 @@ open class DeckPicker :
                     1 -> {
                         val count = haloDeckStatusStore.undoLast()
                         deckListAdapter.refreshHaloAll()
-                        postSnackbar(getString(R.string.halo_undo_result, count), Snackbar.LENGTH_SHORT)
+                        postSnackbar(
+                            getString(R.string.halo_undo_result, count),
+                            Snackbar.LENGTH_SHORT,
+                        )
                     }
-                    2 -> exportHaloDeckStatuses()
-                    3 -> importHaloDeckStatuses()
-                    4 -> showHaloVisualSettingsDialog()
-                    5 -> confirmClearHaloDeckStatuses()
+                    2 -> showHaloDeckFilterDialog()
+                    3 -> showHaloDeckSortDialog()
+                    4 -> showHaloFunctionalVisibilityDialog()
+                    5 -> cleanupHaloDeckConfiguration()
+                    6 -> exportHaloDeckStatuses()
+                    7 -> importHaloDeckStatuses()
+                    8 -> showHaloVisualSettingsDialog()
+                    9 -> confirmClearHaloDeckStatuses()
                 }
             }.setNegativeButton(R.string.dialog_cancel, null)
             .show()
+    }
+
+    private fun toggleHaloFavorite(deckId: DeckId) {
+        val favorite = haloDeckStatusStore.toggleFavorite(deckId)
+        deckListAdapter.refreshHaloAll()
+        postSnackbar(
+            getString(
+                if (favorite) {
+                    R.string.halo_favorite_added
+                } else {
+                    R.string.halo_favorite_removed
+                },
+            ),
+            Snackbar.LENGTH_SHORT,
+        )
+    }
+
+    private fun showHaloDeckFilterDialog() {
+        val statuses = HaloDeckStatus.entries
+        val current = haloDeckStatusStore.organizationSettings().statusFilter
+        val labels =
+            (
+                listOf(getString(R.string.halo_filter_all)) +
+                    statuses.map { getString(it.labelRes) }
+            ).toTypedArray()
+        val selected = current?.ordinal?.plus(1) ?: 0
+        AlertDialog.Builder(this)
+            .setTitle(R.string.halo_organize_filter)
+            .setSingleChoiceItems(labels, selected) { dialog, index ->
+                haloDeckStatusStore.setStatusFilter(
+                    if (index == 0) null else statuses[index - 1],
+                )
+                deckListAdapter.refreshHaloAll()
+                dialog.dismiss()
+            }.setNegativeButton(R.string.dialog_cancel, null)
+            .show()
+    }
+
+    private fun showHaloDeckSortDialog() {
+        val modes = HaloDeckSortMode.entries
+        val settings = haloDeckStatusStore.organizationSettings()
+        val labels =
+            arrayOf(
+                getString(R.string.halo_sort_original),
+                getString(R.string.halo_sort_name),
+                getString(R.string.halo_sort_priority),
+                getString(R.string.halo_sort_pending),
+            )
+        AlertDialog.Builder(this)
+            .setTitle(R.string.halo_organize_sort)
+            .setSingleChoiceItems(labels, settings.sortMode.ordinal) { dialog, index ->
+                haloDeckStatusStore.setSortMode(modes[index])
+                deckListAdapter.refreshHaloAll()
+                dialog.dismiss()
+            }.setNegativeButton(R.string.dialog_cancel, null)
+            .show()
+    }
+
+    private fun showHaloFunctionalVisibilityDialog() {
+        val settings = haloDeckStatusStore.organizationSettings()
+        val labels =
+            arrayOf(
+                getString(R.string.halo_hide_learned),
+                getString(R.string.halo_hide_paused),
+                getString(R.string.halo_favorites_first),
+            )
+        val selected =
+            booleanArrayOf(
+                settings.hideLearned,
+                settings.hidePaused,
+                settings.favoritesFirst,
+            )
+        AlertDialog.Builder(this)
+            .setTitle(R.string.halo_organize_functional_visibility)
+            .setMultiChoiceItems(labels, selected) { _, index, checked ->
+                selected[index] = checked
+            }.setPositiveButton(R.string.dialog_ok) { _, _ ->
+                haloDeckStatusStore.setFunctionalVisibility(
+                    hideLearned = selected[0],
+                    hidePaused = selected[1],
+                    favoritesFirst = selected[2],
+                )
+                deckListAdapter.refreshHaloAll()
+            }.setNegativeButton(R.string.dialog_cancel, null)
+            .show()
+    }
+
+    private fun cleanupHaloDeckConfiguration() {
+        launchCatchingTask {
+            val validDeckIds =
+                withCol {
+                    decks
+                        .allNamesAndIds(
+                            includeFiltered = true,
+                            skipEmptyDefault = false,
+                        ).map { it.id }
+                        .toSet()
+                }
+            val result = haloDeckStatusStore.cleanupOrphans(validDeckIds)
+            deckListAdapter.refreshHaloAll()
+            postSnackbar(
+                getString(
+                    R.string.halo_cleanup_result,
+                    result.statusesRemoved,
+                    result.favoritesRemoved,
+                ),
+                Snackbar.LENGTH_SHORT,
+            )
+        }
     }
 
     private fun showHaloBulkStatusDialog() {

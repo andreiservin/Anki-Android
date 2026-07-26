@@ -35,4 +35,20 @@
     <string name="halo_tint_high">Alta</string>
     <string name="halo_clear_confirmation">Esto borra el estado visual de todos los mazos. Las tarjetas y el progreso no se modifican.</string>
     <string name="halo_cleared_count">Se borraron %1$d estado(s) de mazo</string>
+    <string name="halo_favorite_toggle">Alternar favorito HALO</string>
+    <string name="halo_favorite_added">Mazo añadido a favoritos HALO</string>
+    <string name="halo_favorite_removed">Mazo retirado de favoritos HALO</string>
+    <string name="halo_organize_filter">Filtrar mazos por estado HALO</string>
+    <string name="halo_filter_all">Mostrar todos los estados HALO</string>
+    <string name="halo_organize_sort">Ordenar mazos con HALO</string>
+    <string name="halo_sort_original">Orden original de AnkiDroid</string>
+    <string name="halo_sort_name">Nombre alfabético del mazo HALO</string>
+    <string name="halo_sort_priority">Prioridad del estado HALO</string>
+    <string name="halo_sort_pending">Cantidad de tarjetas pendientes</string>
+    <string name="halo_organize_functional_visibility">Visibilidad funcional de mazos</string>
+    <string name="halo_hide_learned">Ocultar temporalmente los mazos Aprendidos</string>
+    <string name="halo_hide_paused">Ocultar temporalmente los mazos Pausados</string>
+    <string name="halo_favorites_first">Mostrar primero los favoritos HALO</string>
+    <string name="halo_organize_cleanup">Limpiar ajustes HALO de mazos eliminados</string>
+    <string name="halo_cleanup_result">Se eliminaron %1$d estado(s) huérfano(s) y %2$d favorito(s) huérfano(s)</string>
 </resources>

@@ -31,6 +31,9 @@ import com.ichi2.anki.R
 import com.ichi2.anki.common.annotations.NeedsTest
 import com.ichi2.anki.databinding.ItemDeckBinding
 import com.ichi2.anki.deckpicker.DisplayDeckNode
+import com.ichi2.anki.halo.HaloDeckOrganizationSettings
+import com.ichi2.anki.halo.HaloDeckSortMode
+import com.ichi2.anki.halo.HaloDeckStatus
 import com.ichi2.anki.halo.HaloDeckStatusStore
 import com.ichi2.anki.halo.HaloDeckStatusVisuals
 import com.ichi2.anki.libanki.DeckId
@@ -109,7 +112,7 @@ class DeckAdapter(
         val forceRefresh = this.hasSubdecks != hasSubDecks
         this.hasSubdecks = hasSubDecks
         haloSourceData = data
-        submitList(data)
+        submitList(applyHaloOrganization(data))
         if (forceRefresh) notifyDataSetChanged()
     }
 
@@ -124,11 +127,14 @@ class DeckAdapter(
     }
 
     fun refreshHaloDeckStatus(deckId: DeckId) {
-        val position = currentList.indexOfFirst { it.did == deckId }
-        if (position >= 0) notifyItemChanged(position) else notifyDataSetChanged()
+        if (haloSourceData.any { it.did == deckId }) {
+            refreshHaloAll()
+        }
     }
 
-    fun refreshHaloAll() = notifyDataSetChanged()
+    fun refreshHaloAll() {
+        submitList(applyHaloOrganization(haloSourceData))
+    }
 
     fun haloVisibleDeckIds(): List<DeckId> = currentList.map { it.did }
 
@@ -145,6 +151,130 @@ class DeckAdapter(
             ids += node.did
         }
         return ids
+    }
+
+    private data class HaloDeckBlock(
+        val node: DisplayDeckNode,
+        val children: MutableList<HaloDeckBlock> = mutableListOf(),
+        val originalOrder: Int,
+    )
+
+    private fun applyHaloOrganization(data: List<DisplayDeckNode>): List<DisplayDeckNode> {
+        if (data.isEmpty()) return emptyList()
+        val settings = haloDeckStatusStore.organizationSettings()
+        val filtered =
+            parseHaloBlocks(data)
+                .mapNotNull { filterHaloBlock(it, settings) }
+        val sorted = sortHaloBlocks(filtered, settings)
+        return buildList {
+            sorted.forEach { appendHaloBlock(it) }
+        }
+    }
+
+    private fun parseHaloBlocks(data: List<DisplayDeckNode>): List<HaloDeckBlock> {
+        val roots = mutableListOf<HaloDeckBlock>()
+        val stack = mutableListOf<HaloDeckBlock>()
+        data.forEachIndexed { index, node ->
+            while (stack.isNotEmpty() && stack.last().node.depth >= node.depth) {
+                stack.removeAt(stack.lastIndex)
+            }
+            val block = HaloDeckBlock(node = node, originalOrder = index)
+            if (stack.isEmpty()) {
+                roots += block
+            } else {
+                stack.last().children += block
+            }
+            stack += block
+        }
+        return roots
+    }
+
+    private fun filterHaloBlock(
+        block: HaloDeckBlock,
+        settings: HaloDeckOrganizationSettings,
+    ): HaloDeckBlock? {
+        val status = haloDeckStatusStore.get(block.node.did)
+        if (settings.hideLearned && status == HaloDeckStatus.LEARNED) return null
+        if (settings.hidePaused && status == HaloDeckStatus.PAUSED) return null
+
+        val visibleChildren =
+            block.children
+                .mapNotNull { filterHaloBlock(it, settings) }
+                .toMutableList()
+        val matchesFilter = settings.statusFilter == null || settings.statusFilter == status
+        if (!matchesFilter && visibleChildren.isEmpty()) return null
+        return block.copy(children = visibleChildren)
+    }
+
+    private fun sortHaloBlocks(
+        blocks: List<HaloDeckBlock>,
+        settings: HaloDeckOrganizationSettings,
+    ): List<HaloDeckBlock> {
+        val withSortedChildren =
+            blocks.map { block ->
+                block.copy(
+                    children =
+                        sortHaloBlocks(block.children, settings)
+                            .toMutableList(),
+                )
+            }
+        return withSortedChildren.sortedWith(
+            Comparator { first, second ->
+                compareHaloBlocks(first, second, settings)
+            },
+        )
+    }
+
+    private fun compareHaloBlocks(
+        first: HaloDeckBlock,
+        second: HaloDeckBlock,
+        settings: HaloDeckOrganizationSettings,
+    ): Int {
+        if (settings.favoritesFirst) {
+            val firstFavorite = haloDeckStatusStore.isFavorite(first.node.did)
+            val secondFavorite = haloDeckStatusStore.isFavorite(second.node.did)
+            if (firstFavorite != secondFavorite) {
+                return if (firstFavorite) -1 else 1
+            }
+        }
+
+        val result =
+            when (settings.sortMode) {
+                HaloDeckSortMode.ORIGINAL ->
+                    first.originalOrder.compareTo(second.originalOrder)
+                HaloDeckSortMode.NAME ->
+                    first.node.lastDeckNameComponent.compareTo(
+                        second.node.lastDeckNameComponent,
+                        ignoreCase = true,
+                    )
+                HaloDeckSortMode.PRIORITY ->
+                    haloDeckStatusStore
+                        .get(second.node.did)
+                        .priority
+                        .compareTo(haloDeckStatusStore.get(first.node.did).priority)
+                HaloDeckSortMode.PENDING ->
+                    pendingCount(second.node).compareTo(pendingCount(first.node))
+            }
+        if (result != 0) return result
+
+        val nameResult =
+            first.node.lastDeckNameComponent.compareTo(
+                second.node.lastDeckNameComponent,
+                ignoreCase = true,
+            )
+        return if (nameResult != 0) {
+            nameResult
+        } else {
+            first.originalOrder.compareTo(second.originalOrder)
+        }
+    }
+
+    private fun pendingCount(node: DisplayDeckNode): Int =
+        node.newCount + node.lrnCount + node.revCount
+
+    private fun MutableList<DisplayDeckNode>.appendHaloBlock(block: HaloDeckBlock) {
+        add(block.node)
+        block.children.forEach { appendHaloBlock(it) }
     }
 
     override fun onCreateViewHolder(

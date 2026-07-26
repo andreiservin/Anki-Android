@@ -549,6 +549,30 @@ abstract class AbstractFlashcardViewer :
         fun hasGlobalSettings(): Boolean = haloSettingsStore.hasInitializedSettings()
 
         @JavascriptInterface
+        fun getRevealDelayMs(): Int = haloSettingsStore.getAdvanceMs()
+
+        @JavascriptInterface
+        fun setRevealDelayMs(value: Int): Boolean = haloSettingsStore.setAdvanceMs(value)
+
+        @JavascriptInterface
+        fun getRevealDelaySeconds(): Double = haloSettingsStore.getAdvanceMs() / 1000.0
+
+        @JavascriptInterface
+        fun setRevealDelaySeconds(value: Double): Boolean =
+            haloSettingsStore.setAdvanceSeconds(value)
+
+        @JavascriptInterface
+        fun saveRevealDelay(value: String): Boolean =
+            haloSettingsStore.setAdvanceValue(value)
+
+        @JavascriptInterface
+        fun getReverseTransitionMs(): Int = haloSettingsStore.getAdvanceMs()
+
+        @JavascriptInterface
+        fun setReverseTransitionMs(value: Int): Boolean =
+            haloSettingsStore.setAdvanceMs(value)
+
+        @JavascriptInterface
         fun resetGlobalSettings(): Boolean {
             haloSettingsStore.resetSettings()
             haloLastOperationStatus = "settings_reset"
@@ -641,7 +665,7 @@ abstract class AbstractFlashcardViewer :
         }
 
         @JavascriptInterface
-        fun storageVersion(): Int = 4
+        fun storageVersion(): Int = 6
     }
 
     private class HaloSettingsStore(private val context: Context) {
@@ -651,13 +675,60 @@ abstract class AbstractFlashcardViewer :
 
         fun hasInitializedSettings(): Boolean = preferences.getBoolean(INITIALIZED_KEY, false)
 
+        @Synchronized
+        fun getAdvanceMs(): Int {
+            val storedValue =
+                if (preferences.contains(ADVANCE_MS_KEY)) {
+                    preferences.getInt(ADVANCE_MS_KEY, DEFAULT_ADVANCE_MS)
+                } else {
+                    DEFAULT_ADVANCE_MS
+                }
+            val normalizedValue = normalizeAdvanceMs(storedValue)
+            if (!preferences.contains(ADVANCE_MS_KEY) || storedValue != normalizedValue) {
+                preferences.edit()
+                    .putInt(ADVANCE_MS_KEY, normalizedValue)
+                    .putInt(SCHEMA_VERSION_KEY, SETTINGS_SCHEMA_VERSION)
+                    .commit()
+            }
+            return normalizedValue
+        }
+
+        @Synchronized
+        fun setAdvanceMs(value: Int): Boolean =
+            preferences.edit()
+                .putInt(ADVANCE_MS_KEY, normalizeAdvanceMs(value))
+                .putBoolean(INITIALIZED_KEY, true)
+                .putInt(SCHEMA_VERSION_KEY, SETTINGS_SCHEMA_VERSION)
+                .commit()
+
+        fun setAdvanceSeconds(value: Double): Boolean =
+            setAdvanceMs(java.lang.Math.round(value * 1000.0).toInt())
+
+        fun setAdvanceValue(value: String): Boolean {
+            val parsed = value.trim().replace(',', '.').toDoubleOrNull() ?: return false
+            val milliseconds =
+                if (parsed <= MAX_ADVANCE_SECONDS) {
+                    java.lang.Math.round(parsed * 1000.0).toInt()
+                } else {
+                    java.lang.Math.round(parsed).toInt()
+                }
+            return setAdvanceMs(milliseconds)
+        }
+
         fun getSettingsJson(): String {
             val json = JSONObject()
             BOOLEAN_DEFAULTS.forEach { (key, defaultValue) ->
                 json.put(key, preferences.getBoolean(key, defaultValue))
             }
             INTEGER_DEFAULTS.forEach { (key, defaultValue) ->
-                json.put(key, preferences.getInt(key, defaultValue))
+                json.put(
+                    key,
+                    if (key == ADVANCE_MS_KEY) {
+                        getAdvanceMs()
+                    } else {
+                        preferences.getInt(key, defaultValue)
+                    },
+                )
             }
             STRING_DEFAULTS.forEach { (key, defaultValue) ->
                 json.put(key, preferences.getString(key, defaultValue) ?: defaultValue)
@@ -709,9 +780,14 @@ abstract class AbstractFlashcardViewer :
         private fun normalizeIntegerSetting(key: String, value: Int): Int =
             when (key) {
                 "volumePercent" -> value.coerceIn(0, 100)
-                "advanceMs" -> value.coerceIn(100, 3000)
+                ADVANCE_MS_KEY -> normalizeAdvanceMs(value)
                 else -> value
             }
+
+        private fun normalizeAdvanceMs(value: Int): Int {
+            val clamped = value.coerceIn(MIN_ADVANCE_MS, MAX_ADVANCE_MS)
+            return ((clamped + (ADVANCE_STEP_MS / 2)) / ADVANCE_STEP_MS) * ADVANCE_STEP_MS
+        }
 
         private fun normalizeStringSetting(key: String, value: String): String =
             when (key) {
@@ -724,7 +800,13 @@ abstract class AbstractFlashcardViewer :
             private const val PREFERENCES_NAME = "halo_global_settings_v235"
             private const val INITIALIZED_KEY = "initialized"
             private const val SCHEMA_VERSION_KEY = "settings_schema_version"
-            private const val SETTINGS_SCHEMA_VERSION = 1
+            private const val SETTINGS_SCHEMA_VERSION = 3
+            private const val ADVANCE_MS_KEY = "advanceMs"
+            private const val MIN_ADVANCE_MS = 100
+            private const val MAX_ADVANCE_MS = 3000
+            private const val ADVANCE_STEP_MS = 100
+            private const val DEFAULT_ADVANCE_MS = 500
+            private const val MAX_ADVANCE_SECONDS = 3.0
             private val BOOLEAN_DEFAULTS =
                 linkedMapOf(
                     "masterEnabled" to true,
@@ -739,7 +821,7 @@ abstract class AbstractFlashcardViewer :
             private val INTEGER_DEFAULTS =
                 linkedMapOf(
                     "volumePercent" to 70,
-                    "advanceMs" to 500,
+                    ADVANCE_MS_KEY to DEFAULT_ADVANCE_MS,
                 )
             private val STRING_DEFAULTS =
                 linkedMapOf(
@@ -1391,7 +1473,31 @@ abstract class AbstractFlashcardViewer :
 
     /** Invoked by [CardViewerWebClient.onPageFinished] */
     override fun onPageFinished(view: WebView) {
-        // intentionally blank
+        view.post {
+            installHaloRevealDelayPersistence(view)
+        }
+        view.postDelayed(
+            {
+                installHaloRevealDelayPersistence(view)
+            },
+            HALO_REVEAL_DELAY_SECOND_SYNC_MS,
+        )
+    }
+
+    private fun installHaloRevealDelayPersistence(view: WebView) {
+        view.evaluateJavascript(
+            HALO_REVEAL_DELAY_PERSISTENCE_SCRIPT,
+            null,
+        )
+    }
+
+    private fun flushHaloRevealDelayPersistence() {
+        processCardAction { cardWebView ->
+            cardWebView?.evaluateJavascript(
+                "window.HaloRevealDelayPersistence&&window.HaloRevealDelayPersistence.flush();",
+                null,
+            )
+        }
     }
 
     /** Called after an undo or undoable operation takes place. * Should set currentCard to the current card to display. */
@@ -1496,6 +1602,7 @@ abstract class AbstractFlashcardViewer :
 
     // Saves deck each time Reviewer activity loses focus
     override fun onPause() {
+        flushHaloRevealDelayPersistence()
         super.onPause()
         gestureDetectorImpl.stopShakeDetector()
         if (this::cardMediaPlayer.isInitialized) {
@@ -1546,6 +1653,7 @@ abstract class AbstractFlashcardViewer :
     }
 
     override fun onDestroy() {
+        flushHaloRevealDelayPersistence()
         haloFilePathCallback?.onReceiveValue(null)
         haloFilePathCallback = null
         haloPendingAudioSlot = null
@@ -3682,6 +3790,284 @@ abstract class AbstractFlashcardViewer :
         const val INITIAL_HIDE_DELAY = 200
         internal var displayAnswer = false
         const val DEFAULT_DOUBLE_TAP_TIME_INTERVAL = 200
+        private const val HALO_REVEAL_DELAY_SECOND_SYNC_MS = 350L
+
+        private val HALO_REVEAL_DELAY_PERSISTENCE_SCRIPT =
+            """
+            (function () {
+                'use strict';
+                var bridge = window.HaloAudioNative;
+                if (!bridge || typeof bridge.getRevealDelayMs !== 'function') return;
+
+                function clampMs(value) {
+                    var number = Number(value);
+                    if (!Number.isFinite(number)) number = 500;
+                    number = Math.max(100, Math.min(3000, number));
+                    return Math.round(number / 100) * 100;
+                }
+
+                function currentNativeMs() {
+                    try {
+                        return clampMs(bridge.getRevealDelayMs());
+                    } catch (error) {
+                        return 500;
+                    }
+                }
+
+                function saveMs(value) {
+                    var milliseconds = clampMs(value);
+                    try {
+                        if (typeof bridge.setRevealDelayMs === 'function') {
+                            bridge.setRevealDelayMs(milliseconds);
+                        } else if (typeof bridge.saveRevealDelay === 'function') {
+                            bridge.saveRevealDelay(String(milliseconds));
+                        }
+                    } catch (error) {
+                        return false;
+                    }
+                    window.__haloRevealDelayMs = milliseconds;
+                    return true;
+                }
+
+                function elementSignature(element) {
+                    if (!element || element.nodeType !== 1) return '';
+                    var values = [
+                        element.id,
+                        element.name,
+                        element.className,
+                        element.getAttribute('data-setting'),
+                        element.getAttribute('data-key'),
+                        element.getAttribute('aria-label'),
+                        element.getAttribute('title')
+                    ];
+                    if (element.labels) {
+                        for (var index = 0; index < element.labels.length; index += 1) {
+                            values.push(element.labels[index].textContent);
+                        }
+                    }
+                    var parent =
+                        element.closest &&
+                        element.closest(
+                            'label,[data-setting],[data-key],.effect-delay,.transition-delay'
+                        );
+                    if (parent && parent !== element) values.push(parent.textContent);
+                    return values.filter(Boolean).join(' ').toLowerCase();
+                }
+
+                function isRevealControl(element) {
+                    var signature = elementSignature(element);
+                    var minimum = Number(element && element.min);
+                    var maximum = Number(element && element.max);
+                    var step = Number(element && element.step);
+                    var standardHaloRange =
+                        element &&
+                        String(element.type).toLowerCase() === 'range' &&
+                        Number.isFinite(minimum) &&
+                        Number.isFinite(maximum) &&
+                        Number.isFinite(step) &&
+                        minimum >= 0.1 &&
+                        minimum <= 0.5 &&
+                        maximum >= 3 &&
+                        maximum <= 10 &&
+                        Math.abs(step - 0.1) < 0.001;
+                    return (
+                        standardHaloRange ||
+                        signature.indexOf('advancems') >= 0 ||
+                        signature.indexOf('advance-ms') >= 0 ||
+                        signature.indexOf('reveal') >= 0 ||
+                        signature.indexOf('reverse-transition') >= 0 ||
+                        signature.indexOf('reverse transition') >= 0 ||
+                        signature.indexOf('transition-reverse') >= 0 ||
+                        signature.indexOf('transicion') >= 0 ||
+                        signature.indexOf('reverso') >= 0 ||
+                        signature.indexOf('effect-delay') >= 0 ||
+                        signature.indexOf('answer-delay') >= 0
+                    );
+                }
+
+                function elementValueToMs(element) {
+                    if (!element) return null;
+                    var number = Number(String(element.value).replace(',', '.'));
+                    if (!Number.isFinite(number)) return null;
+                    var maximum = Number(element.max);
+                    var step = Number(element.step);
+                    var usesSeconds =
+                        (Number.isFinite(maximum) && maximum <= 10) ||
+                        (Number.isFinite(step) && step > 0 && step <= 1);
+                    return clampMs(usesSeconds ? number * 1000 : number);
+                }
+
+                function candidateFromObjects() {
+                    var objects = [
+                        window.effectSettings,
+                        window.haloEffectSettings,
+                        window.haloSettings,
+                        window.globalSettings,
+                        window.HALO_SETTINGS
+                    ];
+                    var millisecondKeys = ['advanceMs', 'revealDelayMs', 'reverseTransitionMs'];
+                    var secondKeys = ['advanceSeconds', 'revealDelaySeconds', 'reverseTransitionSeconds'];
+                    for (var objectIndex = 0; objectIndex < objects.length; objectIndex += 1) {
+                        var object = objects[objectIndex];
+                        if (!object || typeof object !== 'object') continue;
+                        for (var keyIndex = 0; keyIndex < millisecondKeys.length; keyIndex += 1) {
+                            var millisecondValue = Number(object[millisecondKeys[keyIndex]]);
+                            if (Number.isFinite(millisecondValue)) return clampMs(millisecondValue);
+                        }
+                        for (var secondIndex = 0; secondIndex < secondKeys.length; secondIndex += 1) {
+                            var secondValue = Number(object[secondKeys[secondIndex]]);
+                            if (Number.isFinite(secondValue)) return clampMs(secondValue * 1000);
+                        }
+                    }
+                    return null;
+                }
+
+                function candidateFromControls() {
+                    var controls = document.querySelectorAll('input,select');
+                    for (var index = 0; index < controls.length; index += 1) {
+                        if (!isRevealControl(controls[index])) continue;
+                        var milliseconds = elementValueToMs(controls[index]);
+                        if (milliseconds !== null) return milliseconds;
+                    }
+                    return null;
+                }
+
+                function flush() {
+                    var milliseconds = candidateFromControls();
+                    if (milliseconds === null) milliseconds = candidateFromObjects();
+                    if (milliseconds === null) milliseconds = window.__haloRevealDelayMs;
+                    if (milliseconds === null || typeof milliseconds === 'undefined') {
+                        milliseconds = currentNativeMs();
+                    }
+                    return saveMs(milliseconds);
+                }
+
+                function restoreObjects(milliseconds) {
+                    var objects = [
+                        window.effectSettings,
+                        window.haloEffectSettings,
+                        window.haloSettings,
+                        window.globalSettings,
+                        window.HALO_SETTINGS
+                    ];
+                    for (var index = 0; index < objects.length; index += 1) {
+                        var object = objects[index];
+                        if (!object || typeof object !== 'object') continue;
+                        if ('advanceMs' in object || object === window.effectSettings) {
+                            object.advanceMs = milliseconds;
+                        }
+                        if ('revealDelayMs' in object) object.revealDelayMs = milliseconds;
+                        if ('reverseTransitionMs' in object) object.reverseTransitionMs = milliseconds;
+                        if ('advanceSeconds' in object) object.advanceSeconds = milliseconds / 1000;
+                        if ('revealDelaySeconds' in object) object.revealDelaySeconds = milliseconds / 1000;
+                        if ('reverseTransitionSeconds' in object) {
+                            object.reverseTransitionSeconds = milliseconds / 1000;
+                        }
+                    }
+                    if ('advanceMs' in window) window.advanceMs = milliseconds;
+                    if ('revealDelayMs' in window) window.revealDelayMs = milliseconds;
+                    if ('reverseTransitionMs' in window) window.reverseTransitionMs = milliseconds;
+                }
+
+                function restoreControls(milliseconds) {
+                    var controls = document.querySelectorAll('input,select');
+                    window.__haloRestoringRevealDelay = true;
+                    try {
+                        for (var index = 0; index < controls.length; index += 1) {
+                            var element = controls[index];
+                            if (!isRevealControl(element)) continue;
+                            var maximum = Number(element.max);
+                            var step = Number(element.step);
+                            var usesSeconds =
+                                (Number.isFinite(maximum) && maximum <= 10) ||
+                                (Number.isFinite(step) && step > 0 && step <= 1);
+                            element.value = usesSeconds
+                                ? (milliseconds / 1000).toFixed(1)
+                                : String(milliseconds);
+                            element.dispatchEvent(new Event('input', { bubbles: true }));
+                        }
+                    } finally {
+                        window.__haloRestoringRevealDelay = false;
+                    }
+                }
+
+                function restore() {
+                    var milliseconds = currentNativeMs();
+                    window.__haloRevealDelayMs = milliseconds;
+                    restoreObjects(milliseconds);
+                    restoreControls(milliseconds);
+                    return milliseconds;
+                }
+
+                function saveFromEvent(event) {
+                    if (window.__haloRestoringRevealDelay) return;
+                    var element = event && event.target;
+                    if (!isRevealControl(element)) return;
+                    var milliseconds = elementValueToMs(element);
+                    if (milliseconds !== null) saveMs(milliseconds);
+                }
+
+                function wrapPersistenceFunction(name) {
+                    var original = window[name];
+                    if (typeof original !== 'function' || original.__haloRevealWrapped) return;
+                    var wrapped = function () {
+                        var result = original.apply(this, arguments);
+                        window.setTimeout(flush, 0);
+                        return result;
+                    };
+                    wrapped.__haloRevealWrapped = true;
+                    window[name] = wrapped;
+                }
+
+                window.HaloRevealDelayPersistence = {
+                    getMs: currentNativeMs,
+                    setMs: saveMs,
+                    setSeconds: function (seconds) {
+                        return saveMs(Number(seconds) * 1000);
+                    },
+                    flush: flush,
+                    restore: restore
+                };
+
+                window.haloGetRevealDelayMs = currentNativeMs;
+                window.haloSetRevealDelayMs = saveMs;
+                window.haloSetRevealDelaySeconds = function (seconds) {
+                    return saveMs(Number(seconds) * 1000);
+                };
+
+                document.removeEventListener('change', saveFromEvent, true);
+                document.removeEventListener('pointerup', saveFromEvent, true);
+                document.removeEventListener('touchend', saveFromEvent, true);
+                document.addEventListener('change', saveFromEvent, true);
+                document.addEventListener('pointerup', saveFromEvent, true);
+                document.addEventListener('touchend', saveFromEvent, true);
+
+                wrapPersistenceFunction('persistEffectSettings');
+                wrapPersistenceFunction('saveEffectSettings');
+                wrapPersistenceFunction('persistHaloSettings');
+                wrapPersistenceFunction('saveGlobalSettings');
+
+                if (!window.__haloRevealLifecycleBound) {
+                    window.__haloRevealLifecycleBound = true;
+                    window.addEventListener('pagehide', flush, true);
+                    window.addEventListener('beforeunload', flush, true);
+                    document.addEventListener(
+                        'visibilitychange',
+                        function () {
+                            if (document.visibilityState === 'hidden') flush();
+                        },
+                        true
+                    );
+                }
+
+                restore();
+                window.setTimeout(function () {
+                    wrapPersistenceFunction('persistEffectSettings');
+                    wrapPersistenceFunction('saveEffectSettings');
+                    restore();
+                }, 120);
+            })();
+            """.trimIndent()
 
         /** Handle providing help for "Image Not Found"  */
         internal val mediaErrorHandler = MediaErrorHandler()

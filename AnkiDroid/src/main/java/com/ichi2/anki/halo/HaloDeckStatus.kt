@@ -58,8 +58,11 @@ enum class HaloDeckStatus(
     ;
 
     companion object {
+        fun fromStorageKeyOrNull(value: String?): HaloDeckStatus? =
+            entries.firstOrNull { it.storageKey == value }
+
         fun fromStorageKey(value: String?): HaloDeckStatus =
-            entries.firstOrNull { it.storageKey == value } ?: NORMAL
+            fromStorageKeyOrNull(value) ?: NORMAL
     }
 }
 
@@ -68,6 +71,32 @@ data class HaloDeckVisualSettings(
     val showDot: Boolean,
     val showTint: Boolean,
     val tintAlpha: Int,
+)
+
+enum class HaloDeckSortMode(val storageKey: String) {
+    ORIGINAL("original"),
+    NAME("name"),
+    PRIORITY("priority"),
+    PENDING("pending"),
+    ;
+
+    companion object {
+        fun fromStorageKey(value: String?): HaloDeckSortMode =
+            entries.firstOrNull { it.storageKey == value } ?: ORIGINAL
+    }
+}
+
+data class HaloDeckOrganizationSettings(
+    val statusFilter: HaloDeckStatus?,
+    val sortMode: HaloDeckSortMode,
+    val hideLearned: Boolean,
+    val hidePaused: Boolean,
+    val favoritesFirst: Boolean,
+)
+
+data class HaloDeckCleanupResult(
+    val statusesRemoved: Int,
+    val favoritesRemoved: Int,
 )
 
 class HaloDeckStatusStore(context: Context) {
@@ -80,6 +109,84 @@ class HaloDeckStatusStore(context: Context) {
 
     fun get(deckId: DeckId): HaloDeckStatus =
         HaloDeckStatus.fromStorageKey(preferences.getString(deckKey(deckId), null))
+
+    fun isFavorite(deckId: DeckId): Boolean =
+        preferences.getBoolean(favoriteKey(deckId), false)
+
+    fun toggleFavorite(deckId: DeckId): Boolean {
+        val favorite = !isFavorite(deckId)
+        val editor = preferences.edit()
+        if (favorite) {
+            editor.putBoolean(favoriteKey(deckId), true)
+        } else {
+            editor.remove(favoriteKey(deckId))
+        }
+        editor.apply()
+        return favorite
+    }
+
+    fun organizationSettings(): HaloDeckOrganizationSettings =
+        HaloDeckOrganizationSettings(
+            statusFilter =
+                HaloDeckStatus.fromStorageKeyOrNull(
+                    preferences.getString(FILTER_STATUS_KEY, null),
+                ),
+            sortMode =
+                HaloDeckSortMode.fromStorageKey(
+                    preferences.getString(SORT_MODE_KEY, null),
+                ),
+            hideLearned = preferences.getBoolean(HIDE_LEARNED_KEY, false),
+            hidePaused = preferences.getBoolean(HIDE_PAUSED_KEY, false),
+            favoritesFirst = preferences.getBoolean(FAVORITES_FIRST_KEY, true),
+        )
+
+    fun setStatusFilter(status: HaloDeckStatus?) {
+        val editor = preferences.edit()
+        if (status == null) {
+            editor.remove(FILTER_STATUS_KEY)
+        } else {
+            editor.putString(FILTER_STATUS_KEY, status.storageKey)
+        }
+        editor.apply()
+    }
+
+    fun setSortMode(mode: HaloDeckSortMode) {
+        preferences.edit().putString(SORT_MODE_KEY, mode.storageKey).apply()
+    }
+
+    fun setFunctionalVisibility(
+        hideLearned: Boolean,
+        hidePaused: Boolean,
+        favoritesFirst: Boolean,
+    ) {
+        preferences.edit()
+            .putBoolean(HIDE_LEARNED_KEY, hideLearned)
+            .putBoolean(HIDE_PAUSED_KEY, hidePaused)
+            .putBoolean(FAVORITES_FIRST_KEY, favoritesFirst)
+            .apply()
+    }
+
+    fun cleanupOrphans(validDeckIds: Set<DeckId>): HaloDeckCleanupResult {
+        val validIds = validDeckIds.map { it.toString() }.toSet()
+        val statusKeys =
+            preferences.all.keys.filter { key ->
+                key.startsWith(DECK_PREFIX) &&
+                    key.removePrefix(DECK_PREFIX) !in validIds
+            }
+        val favoriteKeys =
+            preferences.all.keys.filter { key ->
+                key.startsWith(FAVORITE_PREFIX) &&
+                    key.removePrefix(FAVORITE_PREFIX) !in validIds
+            }
+        val editor = preferences.edit()
+        statusKeys.forEach(editor::remove)
+        favoriteKeys.forEach(editor::remove)
+        editor.apply()
+        return HaloDeckCleanupResult(
+            statusesRemoved = statusKeys.size,
+            favoritesRemoved = favoriteKeys.size,
+        )
+    }
 
     fun set(deckId: DeckId, status: HaloDeckStatus) = setMany(listOf(deckId), status)
 
@@ -119,20 +226,36 @@ class HaloDeckStatusStore(context: Context) {
 
     fun exportJson(): String {
         val decks = JSONObject()
+        val favorites = JSONObject()
         preferences.all.forEach { (key, value) ->
-            if (key.startsWith(DECK_PREFIX) && value is String) decks.put(key.removePrefix(DECK_PREFIX), value)
+            when {
+                key.startsWith(DECK_PREFIX) && value is String ->
+                    decks.put(key.removePrefix(DECK_PREFIX), value)
+                key.startsWith(FAVORITE_PREFIX) && value == true ->
+                    favorites.put(key.removePrefix(FAVORITE_PREFIX), true)
+            }
         }
-        val settings = JSONObject().apply {
-            val visual = visualSettings()
-            put("showStatusText", visual.showStatusText)
-            put("showDot", visual.showDot)
-            put("showTint", visual.showTint)
-            put("tintAlpha", visual.tintAlpha)
+        val visual = JSONObject().apply {
+            val settings = visualSettings()
+            put("showStatusText", settings.showStatusText)
+            put("showDot", settings.showDot)
+            put("showTint", settings.showTint)
+            put("tintAlpha", settings.tintAlpha)
+        }
+        val organization = JSONObject().apply {
+            val settings = organizationSettings()
+            put("statusFilter", settings.statusFilter?.storageKey ?: "")
+            put("sortMode", settings.sortMode.storageKey)
+            put("hideLearned", settings.hideLearned)
+            put("hidePaused", settings.hidePaused)
+            put("favoritesFirst", settings.favoritesFirst)
         }
         return JSONObject().apply {
-            put("format", "halo-deck-status-v2")
+            put("format", "halo-deck-status-v3")
             put("decks", decks)
-            put("visual", settings)
+            put("favorites", favorites)
+            put("visual", visual)
+            put("organization", organization)
         }.toString(2)
     }
 
@@ -140,20 +263,61 @@ class HaloDeckStatusStore(context: Context) {
         val root = runCatching { JSONObject(raw) }.getOrNull() ?: return -1
         val decks = root.optJSONObject("decks") ?: return -1
         val editor = preferences.edit()
-        val currentKeys = preferences.all.keys.filter { it.startsWith(DECK_PREFIX) }
-        saveUndoKeys(currentKeys)
-        currentKeys.forEach(editor::remove)
+        val currentStatusKeys = preferences.all.keys.filter { it.startsWith(DECK_PREFIX) }
+        val currentFavoriteKeys = preferences.all.keys.filter { it.startsWith(FAVORITE_PREFIX) }
+        saveUndoKeys(currentStatusKeys)
+        currentStatusKeys.forEach(editor::remove)
+        currentFavoriteKeys.forEach(editor::remove)
         var count = 0
         decks.keys().forEach { id ->
             val status = HaloDeckStatus.fromStorageKey(decks.optString(id, ""))
             editor.putString("$DECK_PREFIX$id", status.storageKey)
             count++
         }
+        root.optJSONObject("favorites")?.let { favorites ->
+            favorites.keys().forEach { id ->
+                if (favorites.optBoolean(id, false)) {
+                    editor.putBoolean("$FAVORITE_PREFIX$id", true)
+                }
+            }
+        }
         root.optJSONObject("visual")?.let { visual ->
             editor.putBoolean(SHOW_TEXT_KEY, visual.optBoolean("showStatusText", true))
             editor.putBoolean(SHOW_DOT_KEY, visual.optBoolean("showDot", true))
             editor.putBoolean(SHOW_TINT_KEY, visual.optBoolean("showTint", true))
-            editor.putInt(TINT_ALPHA_KEY, visual.optInt("tintAlpha", DEFAULT_TINT_ALPHA).coerceIn(0, 72))
+            editor.putInt(
+                TINT_ALPHA_KEY,
+                visual.optInt("tintAlpha", DEFAULT_TINT_ALPHA).coerceIn(0, 72),
+            )
+        }
+        root.optJSONObject("organization")?.let { organization ->
+            val statusFilter =
+                HaloDeckStatus.fromStorageKeyOrNull(
+                    organization.optString("statusFilter", ""),
+                )
+            if (statusFilter == null) {
+                editor.remove(FILTER_STATUS_KEY)
+            } else {
+                editor.putString(FILTER_STATUS_KEY, statusFilter.storageKey)
+            }
+            editor.putString(
+                SORT_MODE_KEY,
+                HaloDeckSortMode
+                    .fromStorageKey(organization.optString("sortMode", ""))
+                    .storageKey,
+            )
+            editor.putBoolean(
+                HIDE_LEARNED_KEY,
+                organization.optBoolean("hideLearned", false),
+            )
+            editor.putBoolean(
+                HIDE_PAUSED_KEY,
+                organization.optBoolean("hidePaused", false),
+            )
+            editor.putBoolean(
+                FAVORITES_FIRST_KEY,
+                organization.optBoolean("favoritesFirst", true),
+            )
         }
         editor.apply()
         return count
@@ -206,17 +370,25 @@ class HaloDeckStatusStore(context: Context) {
 
     private fun deckKey(deckId: DeckId): String = "$DECK_PREFIX$deckId"
 
+    private fun favoriteKey(deckId: DeckId): String = "$FAVORITE_PREFIX$deckId"
+
     companion object {
         private const val PREFERENCES_NAME = "halo_deck_statuses_v2"
         private const val LEGACY_PREFERENCES_NAME = "halo_deck_statuses_v1"
         private const val MIGRATION_V1_KEY = "migration_v1_complete"
         private const val DECK_PREFIX = "deck_"
+        private const val FAVORITE_PREFIX = "favorite_"
         private const val UNDO_KEY = "last_undo"
         private const val MISSING_VALUE = "__HALO_MISSING__"
         private const val SHOW_TEXT_KEY = "visual_show_text"
         private const val SHOW_DOT_KEY = "visual_show_dot"
         private const val SHOW_TINT_KEY = "visual_show_tint"
         private const val TINT_ALPHA_KEY = "visual_tint_alpha"
+        private const val FILTER_STATUS_KEY = "organization_status_filter"
+        private const val SORT_MODE_KEY = "organization_sort_mode"
+        private const val HIDE_LEARNED_KEY = "organization_hide_learned"
+        private const val HIDE_PAUSED_KEY = "organization_hide_paused"
+        private const val FAVORITES_FIRST_KEY = "organization_favorites_first"
         private const val DEFAULT_TINT_ALPHA = 24
     }
 }

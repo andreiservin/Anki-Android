@@ -580,7 +580,7 @@ class DeckPickerViewModel :
     suspend fun refreshMenuState() {
         flowOfOptionsMenuState.value =
             withOpenColOrNull {
-                val searchIcon = decks.count() >= 10
+                val searchIcon = decks.count() >= 1
                 val undoLabel = undoLabel()
                 val undoAvailable = undoAvailable()
                 // besides checking for cards being available also consider if we have empty decks

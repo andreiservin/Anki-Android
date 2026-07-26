@@ -35,4 +35,20 @@
     <string name="halo_tint_high">High</string>
     <string name="halo_clear_confirmation">This clears the visual status of every deck. Cards and study progress are not changed.</string>
     <string name="halo_cleared_count">Cleared %1$d deck status(es)</string>
+    <string name="halo_favorite_toggle">Toggle HALO favorite</string>
+    <string name="halo_favorite_added">Deck added to HALO favorites</string>
+    <string name="halo_favorite_removed">Deck removed from HALO favorites</string>
+    <string name="halo_organize_filter">Filter decks by HALO status</string>
+    <string name="halo_filter_all">Show all HALO statuses</string>
+    <string name="halo_organize_sort">Sort decks with HALO</string>
+    <string name="halo_sort_original">Original AnkiDroid order</string>
+    <string name="halo_sort_name">Alphabetical HALO deck name</string>
+    <string name="halo_sort_priority">HALO status priority</string>
+    <string name="halo_sort_pending">Pending card count</string>
+    <string name="halo_organize_functional_visibility">Functional deck visibility</string>
+    <string name="halo_hide_learned">Temporarily hide Learned decks</string>
+    <string name="halo_hide_paused">Temporarily hide Paused decks</string>
+    <string name="halo_favorites_first">Show HALO favorites first</string>
+    <string name="halo_organize_cleanup">Clean deleted-deck HALO settings</string>
+    <string name="halo_cleanup_result">Removed %1$d orphaned status(es) and %2$d orphaned favorite(s)</string>
 </resources>
