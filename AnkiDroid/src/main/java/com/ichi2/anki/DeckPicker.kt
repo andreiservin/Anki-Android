@@ -1117,50 +1117,6 @@ open class DeckPicker :
         postSnackbar(getString(R.string.halo_deck_status_saved_count, getString(status.labelRes), count), Snackbar.LENGTH_SHORT)
     }
 
-    private fun showHaloDeckOrganizerDialog() {
-        val options =
-            arrayOf(
-                getString(R.string.halo_organize_bulk),
-                getString(R.string.halo_organize_undo),
-                getString(R.string.halo_organize_filter),
-                getString(R.string.halo_organize_special_filters),
-                getString(R.string.halo_organize_sort),
-                getString(R.string.halo_organize_functional_visibility),
-                getString(R.string.halo_organize_continue_last),
-                getString(R.string.halo_organize_cleanup),
-                getString(R.string.halo_organize_export),
-                getString(R.string.halo_organize_import),
-                getString(R.string.halo_organize_visual),
-                getString(R.string.halo_organize_clear),
-            )
-        AlertDialog.Builder(this)
-            .setTitle(R.string.halo_deck_organize)
-            .setItems(options) { _, selected ->
-                when (selected) {
-                    0 -> showHaloBulkStatusDialog()
-                    1 -> {
-                        val count = haloDeckStatusStore.undoLast()
-                        deckListAdapter.refreshHaloAll()
-                        postSnackbar(
-                            getString(R.string.halo_undo_result, count),
-                            Snackbar.LENGTH_SHORT,
-                        )
-                    }
-                    2 -> showHaloDeckFilterDialog()
-                    3 -> showHaloSpecialFiltersDialog()
-                    4 -> showHaloDeckSortDialog()
-                    5 -> showHaloFunctionalVisibilityDialog()
-                    6 -> continueHaloLastStudiedDeck(showUnavailableMessage = true)
-                    7 -> cleanupHaloDeckConfiguration()
-                    8 -> exportHaloDeckStatuses()
-                    9 -> importHaloDeckStatuses()
-                    10 -> showHaloVisualSettingsDialog()
-                    11 -> confirmClearHaloDeckStatuses()
-                }
-            }.setNegativeButton(R.string.dialog_cancel, null)
-            .show()
-    }
-
     private fun toggleHaloFavorite(deckId: DeckId) {
         val favorite = haloDeckStatusStore.toggleFavorite(deckId)
         deckListAdapter.refreshHaloAll()
