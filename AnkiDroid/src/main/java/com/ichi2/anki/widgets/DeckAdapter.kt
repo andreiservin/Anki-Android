@@ -59,6 +59,7 @@ class DeckAdapter(
 ) : ListAdapter<DisplayDeckNode, DeckAdapter.ViewHolder>(deckNodeDiffCallback) {
     private val layoutInflater = LayoutInflater.from(context)
     private val haloDeckStatusStore = HaloDeckStatusStore(context)
+    private var haloSourceData: List<DisplayDeckNode> = emptyList()
     private val zeroCountColor: Int
     private val newCountColor: Int
     private val learnCountColor: Int
@@ -107,6 +108,7 @@ class DeckAdapter(
         // adapter's items so there wouldn't be an ui refresh just from using submitList()
         val forceRefresh = this.hasSubdecks != hasSubDecks
         this.hasSubdecks = hasSubDecks
+        haloSourceData = data
         submitList(data)
         if (forceRefresh) notifyDataSetChanged()
     }
@@ -123,11 +125,26 @@ class DeckAdapter(
 
     fun refreshHaloDeckStatus(deckId: DeckId) {
         val position = currentList.indexOfFirst { it.did == deckId }
-        if (position >= 0) {
-            notifyItemChanged(position)
-        } else {
-            notifyDataSetChanged()
+        if (position >= 0) notifyItemChanged(position) else notifyDataSetChanged()
+    }
+
+    fun refreshHaloAll() = notifyDataSetChanged()
+
+    fun haloVisibleDeckIds(): List<DeckId> = currentList.map { it.did }
+
+    fun haloDeckIdsFor(deckId: DeckId, includeSubdecks: Boolean): List<DeckId> {
+        if (!includeSubdecks) return listOf(deckId)
+        val source = haloSourceData.ifEmpty { currentList }
+        val index = source.indexOfFirst { it.did == deckId }
+        if (index < 0) return listOf(deckId)
+        val baseDepth = source[index].depth
+        val ids = mutableListOf(deckId)
+        for (position in (index + 1) until source.size) {
+            val node = source[position]
+            if (node.depth <= baseDepth) break
+            ids += node.did
         }
+        return ids
     }
 
     override fun onCreateViewHolder(
@@ -186,6 +203,7 @@ class DeckAdapter(
             status = haloDeckStatusStore.get(node.did),
             selected = node.isSelected,
             defaultTextColor = deckTextColor,
+            settings = haloDeckStatusStore.visualSettings(),
         )
 
         // Set the card counts and their colors

@@ -26,6 +26,8 @@
 package com.ichi2.anki
 
 import android.content.Context
+import android.content.ClipboardManager
+import android.content.ClipData
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.res.Configuration
@@ -853,6 +855,10 @@ open class DeckPicker :
                 Timber.i("ContextMenu: HALO color and status selected for deck %d", deckId)
                 showHaloDeckStatusDialog(deckId)
             }
+            DeckPickerContextMenuOption.HALO_ORGANIZE -> {
+                Timber.i("ContextMenu: HALO organizer selected")
+                showHaloDeckOrganizerDialog()
+            }
             DeckPickerContextMenuOption.CUSTOM_STUDY -> {
                 Timber.i("ContextMenu: Custom study option selected")
                 showDialogFragment(CustomStudyDialog.createInstance(deckId))
@@ -913,19 +919,142 @@ open class DeckPicker :
     }
 
     private fun showHaloDeckStatusDialog(deckId: DeckId) {
-        val statuses = HaloDeckStatus.values()
+        val statuses = HaloDeckStatus.entries
         val currentStatus = haloDeckStatusStore.get(deckId)
         val labels = statuses.map { getString(it.labelRes) }.toTypedArray()
-
-        AlertDialog
-            .Builder(this)
+        AlertDialog.Builder(this)
             .setTitle(R.string.halo_deck_color_and_status)
             .setSingleChoiceItems(labels, currentStatus.ordinal) { dialog, selectedIndex ->
-                val selectedStatus = statuses[selectedIndex]
-                haloDeckStatusStore.set(deckId, selectedStatus)
-                deckListAdapter.refreshHaloDeckStatus(deckId)
-                postSnackbar(getString(R.string.halo_deck_status_saved, getString(selectedStatus.labelRes)), Snackbar.LENGTH_SHORT)
                 dialog.dismiss()
+                showHaloDeckStatusScopeDialog(deckId, statuses[selectedIndex])
+            }.setNegativeButton(R.string.dialog_cancel, null)
+            .show()
+    }
+
+    private fun showHaloDeckStatusScopeDialog(deckId: DeckId, status: HaloDeckStatus) {
+        val withChildren = deckListAdapter.haloDeckIdsFor(deckId, includeSubdecks = true)
+        if (withChildren.size <= 1) {
+            applyHaloStatus(listOf(deckId), status)
+            return
+        }
+        val options = arrayOf(getString(R.string.halo_scope_only_deck), getString(R.string.halo_scope_with_subdecks, withChildren.size - 1))
+        AlertDialog.Builder(this)
+            .setTitle(R.string.halo_scope_title)
+            .setItems(options) { _, selected ->
+                val ids = if (selected == 1) withChildren else listOf(deckId)
+                applyHaloStatus(ids, status)
+            }.setNegativeButton(R.string.dialog_cancel, null)
+            .show()
+    }
+
+    private fun applyHaloStatus(deckIds: Collection<DeckId>, status: HaloDeckStatus) {
+        val count = haloDeckStatusStore.setMany(deckIds, status)
+        deckListAdapter.refreshHaloAll()
+        postSnackbar(getString(R.string.halo_deck_status_saved_count, getString(status.labelRes), count), Snackbar.LENGTH_SHORT)
+    }
+
+    private fun showHaloDeckOrganizerDialog() {
+        val options = arrayOf(
+            getString(R.string.halo_organize_bulk),
+            getString(R.string.halo_organize_undo),
+            getString(R.string.halo_organize_export),
+            getString(R.string.halo_organize_import),
+            getString(R.string.halo_organize_visual),
+            getString(R.string.halo_organize_clear),
+        )
+        AlertDialog.Builder(this)
+            .setTitle(R.string.halo_deck_organize)
+            .setItems(options) { _, selected ->
+                when (selected) {
+                    0 -> showHaloBulkStatusDialog()
+                    1 -> {
+                        val count = haloDeckStatusStore.undoLast()
+                        deckListAdapter.refreshHaloAll()
+                        postSnackbar(getString(R.string.halo_undo_result, count), Snackbar.LENGTH_SHORT)
+                    }
+                    2 -> exportHaloDeckStatuses()
+                    3 -> importHaloDeckStatuses()
+                    4 -> showHaloVisualSettingsDialog()
+                    5 -> confirmClearHaloDeckStatuses()
+                }
+            }.setNegativeButton(R.string.dialog_cancel, null)
+            .show()
+    }
+
+    private fun showHaloBulkStatusDialog() {
+        val ids = deckListAdapter.haloVisibleDeckIds()
+        val statuses = HaloDeckStatus.entries
+        val labels = statuses.map { getString(it.labelRes) }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.halo_organize_bulk_title)
+            .setItems(labels) { _, selected -> applyHaloStatus(ids, statuses[selected]) }
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .show()
+    }
+
+    private fun exportHaloDeckStatuses() {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("HALO V28 deck status", haloDeckStatusStore.exportJson()))
+        postSnackbar(getString(R.string.halo_exported_clipboard), Snackbar.LENGTH_SHORT)
+    }
+
+    private fun importHaloDeckStatuses() {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val text = clipboard.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
+        val count = haloDeckStatusStore.importJson(text)
+        if (count < 0) {
+            postSnackbar(getString(R.string.halo_import_invalid), Snackbar.LENGTH_SHORT)
+        } else {
+            deckListAdapter.refreshHaloAll()
+            postSnackbar(getString(R.string.halo_imported_count, count), Snackbar.LENGTH_SHORT)
+        }
+    }
+
+    private fun showHaloVisualSettingsDialog() {
+        val settings = haloDeckStatusStore.visualSettings()
+        val labels = arrayOf(
+            getString(R.string.halo_visual_show_text),
+            getString(R.string.halo_visual_show_dot),
+            getString(R.string.halo_visual_show_tint),
+        )
+        val checked = booleanArrayOf(settings.showStatusText, settings.showDot, settings.showTint)
+        AlertDialog.Builder(this)
+            .setTitle(R.string.halo_organize_visual)
+            .setMultiChoiceItems(labels, checked) { _, which, enabled ->
+                haloDeckStatusStore.setVisualSetting(arrayOf("text", "dot", "tint")[which], enabled)
+            }.setPositiveButton(R.string.halo_visual_intensity) { _, _ -> showHaloTintIntensityDialog() }
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .setNeutralButton(R.string.dialog_ok) { _, _ -> deckListAdapter.refreshHaloAll() }
+            .show()
+    }
+
+    private fun showHaloTintIntensityDialog() {
+        val values = intArrayOf(12, 24, 42, 60)
+        val labels = arrayOf(
+            getString(R.string.halo_tint_very_soft),
+            getString(R.string.halo_tint_soft),
+            getString(R.string.halo_tint_medium),
+            getString(R.string.halo_tint_high),
+        )
+        val current = values.indexOf(haloDeckStatusStore.visualSettings().tintAlpha).coerceAtLeast(1)
+        AlertDialog.Builder(this)
+            .setTitle(R.string.halo_visual_intensity)
+            .setSingleChoiceItems(labels, current) { dialog, selected ->
+                haloDeckStatusStore.setTintAlpha(values[selected])
+                deckListAdapter.refreshHaloAll()
+                dialog.dismiss()
+            }.setNegativeButton(R.string.dialog_cancel, null)
+            .show()
+    }
+
+    private fun confirmClearHaloDeckStatuses() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.halo_organize_clear)
+            .setMessage(R.string.halo_clear_confirmation)
+            .setPositiveButton(R.string.dialog_ok) { _, _ ->
+                val count = haloDeckStatusStore.clearAllStatuses()
+                deckListAdapter.refreshHaloAll()
+                postSnackbar(getString(R.string.halo_cleared_count, count), Snackbar.LENGTH_SHORT)
             }.setNegativeButton(R.string.dialog_cancel, null)
             .show()
     }

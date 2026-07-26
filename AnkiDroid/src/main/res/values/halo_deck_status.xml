@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="halo_deck_color_and_status">Color and status</string>
+    <string name="halo_deck_organize">HALO deck organization</string>
     <string name="halo_deck_status_normal">Normal</string>
     <string name="halo_deck_status_urgent">Urgent</string>
     <string name="halo_deck_status_pending">Pending</string>
@@ -9,5 +10,30 @@
     <string name="halo_deck_status_special_review">Special review</string>
     <string name="halo_deck_status_paused">Paused</string>
     <string name="halo_deck_status_saved">Deck status: %1$s</string>
+    <string name="halo_deck_status_saved_count">%1$s applied to %2$d deck(s)</string>
     <string name="halo_deck_accessibility_description">%1$s, status: %2$s</string>
+    <string name="halo_scope_title">Apply status to</string>
+    <string name="halo_scope_only_deck">Only this deck</string>
+    <string name="halo_scope_with_subdecks">This deck and %1$d subdeck(s)</string>
+    <string name="halo_organize_bulk">Apply status to all visible decks</string>
+    <string name="halo_organize_bulk_title">Status for visible decks</string>
+    <string name="halo_organize_undo">Undo last status change</string>
+    <string name="halo_organize_export">Copy configuration to clipboard</string>
+    <string name="halo_organize_import">Import configuration from clipboard</string>
+    <string name="halo_organize_visual">Visual settings</string>
+    <string name="halo_organize_clear">Clear all deck statuses</string>
+    <string name="halo_undo_result">Restored %1$d deck(s)</string>
+    <string name="halo_exported_clipboard">HALO configuration copied</string>
+    <string name="halo_import_invalid">Clipboard does not contain a valid HALO configuration</string>
+    <string name="halo_imported_count">Imported %1$d deck status(es)</string>
+    <string name="halo_visual_show_text">Show status text</string>
+    <string name="halo_visual_show_dot">Show status dot</string>
+    <string name="halo_visual_show_tint">Show tinted background</string>
+    <string name="halo_visual_intensity">Tint intensity</string>
+    <string name="halo_tint_very_soft">Very soft</string>
+    <string name="halo_tint_soft">Soft</string>
+    <string name="halo_tint_medium">Medium</string>
+    <string name="halo_tint_high">High</string>
+    <string name="halo_clear_confirmation">This clears the visual status of every deck. Cards and study progress are not changed.</string>
+    <string name="halo_cleared_count">Cleared %1$d deck status(es)</string>
 </resources>

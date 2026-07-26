@@ -709,7 +709,7 @@ abstract class AbstractFlashcardViewer :
         private fun normalizeIntegerSetting(key: String, value: Int): Int =
             when (key) {
                 "volumePercent" -> value.coerceIn(0, 100)
-                "advanceMs" -> value.coerceIn(500, 10000)
+                "advanceMs" -> value.coerceIn(100, 3000)
                 else -> value
             }
 
@@ -739,7 +739,7 @@ abstract class AbstractFlashcardViewer :
             private val INTEGER_DEFAULTS =
                 linkedMapOf(
                     "volumePercent" to 70,
-                    "advanceMs" to 700,
+                    "advanceMs" to 500,
                 )
             private val STRING_DEFAULTS =
                 linkedMapOf(
