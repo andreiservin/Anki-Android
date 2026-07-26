@@ -9,8 +9,7 @@
     <string name="halo_deck_status_learned">Learned</string>
     <string name="halo_deck_status_special_review">Special review</string>
     <string name="halo_deck_status_paused">Paused</string>
-    <string name="halo_deck_status_saved">Deck status: %1$s</string>
-    <string name="halo_deck_status_saved_count">%1$s applied to %2$d deck(s)</string>
+<string name="halo_deck_status_saved_count">%1$s applied to %2$d deck(s)</string>
     <string name="halo_deck_accessibility_description">%1$s, status: %2$s</string>
     <string name="halo_scope_title">Apply status to</string>
     <string name="halo_scope_only_deck">Only this deck</string>
@@ -32,7 +31,7 @@
     <string name="halo_visual_intensity">Tint intensity</string>
     <string name="halo_tint_very_soft">Very soft</string>
     <string name="halo_tint_soft">Soft</string>
-    <string name="halo_tint_medium">Medium</string>
+    <string name="halo_tint_medium">Balanced</string>
     <string name="halo_tint_high">High</string>
     <string name="halo_clear_confirmation">This clears the visual status of every deck. Cards and study progress are not changed.</string>
     <string name="halo_cleared_count">Cleared %1$d deck status(es)</string>

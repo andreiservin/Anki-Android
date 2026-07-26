@@ -9,8 +9,7 @@
     <string name="halo_deck_status_learned">Aprendido</string>
     <string name="halo_deck_status_special_review">Repaso especial</string>
     <string name="halo_deck_status_paused">Pausado</string>
-    <string name="halo_deck_status_saved">Estado del mazo: %1$s</string>
-    <string name="halo_deck_status_saved_count">%1$s aplicado a %2$d mazo(s)</string>
+<string name="halo_deck_status_saved_count">%1$s aplicado a %2$d mazo(s)</string>
     <string name="halo_deck_accessibility_description">%1$s, estado: %2$s</string>
     <string name="halo_scope_title">Aplicar estado a</string>
     <string name="halo_scope_only_deck">Solo este mazo</string>
@@ -32,7 +31,7 @@
     <string name="halo_visual_intensity">Intensidad del tinte</string>
     <string name="halo_tint_very_soft">Muy suave</string>
     <string name="halo_tint_soft">Suave</string>
-    <string name="halo_tint_medium">Media</string>
+    <string name="halo_tint_medium">Equilibrado</string>
     <string name="halo_tint_high">Alta</string>
     <string name="halo_clear_confirmation">Esto borra el estado visual de todos los mazos. Las tarjetas y el progreso no se modifican.</string>
     <string name="halo_cleared_count">Se borraron %1$d estado(s) de mazo</string>
