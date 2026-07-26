@@ -37,6 +37,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.OpenableColumns
+import android.util.Base64
 import android.view.GestureDetector
 import android.view.GestureDetector.SimpleOnGestureListener
 import android.view.KeyEvent
@@ -51,8 +53,11 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.webkit.CookieManager
 import android.webkit.JsResult
+import android.webkit.JavascriptInterface
+import android.webkit.MimeTypeMap
 import android.webkit.PermissionRequest
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -79,10 +84,12 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.children
 import androidx.core.view.isVisible
 import androidx.lifecycle.Lifecycle.State.RESUMED
+import androidx.lifecycle.lifecycleScope
 import anki.collection.OpChanges
 import anki.scheduler.CardAnswer.Rating
 import com.drakeet.drawer.FullDraggableContainer
 import com.google.android.material.snackbar.Snackbar
+import com.google.protobuf.kotlin.toByteString
 import com.ichi2.anim.ActivityTransitionAnimation
 import com.ichi2.anki.AbstractFlashcardViewer.Signal.Companion.toSignal
 import com.ichi2.anki.CollectionManager.TR
@@ -170,17 +177,28 @@ import com.ichi2.utils.positiveButton
 import com.ichi2.utils.show
 import com.ichi2.utils.title
 import com.squareup.seismic.ShakeDetector
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import timber.log.Timber
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.UnsupportedEncodingException
 import java.net.URLDecoder
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.Lock
 import java.util.concurrent.locks.ReadWriteLock
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import java.util.function.Consumer
 import java.util.function.Function
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
+import org.json.JSONObject
 import kotlin.math.abs
 
 abstract class AbstractFlashcardViewer :
@@ -335,10 +353,879 @@ abstract class AbstractFlashcardViewer :
                     onEditedNoteChanged()
                 } else if (result.resultCode == RESULT_CANCELED && !reloadRequired) {
                     // nothing was changed by the note editor so just redraw the card
-                    redrawCard()
-                }
+                    }
             },
         )
+
+    private var haloFilePathCallback: ValueCallback<Array<Uri>>? = null
+
+    @Volatile
+    private var haloPendingAudioSlot: String? = null
+
+    @Volatile
+    private var haloLastOperationStatus: String = "idle"
+
+    private val haloAudioStore by lazy { HaloAudioStore(this) }
+
+    private val haloSettingsStore by lazy { HaloSettingsStore(this) }
+
+    private val haloAudioReconcileInProgress = AtomicBoolean(false)
+
+    private val haloFileChooserLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val callback = haloFilePathCallback
+            haloFilePathCallback = null
+            val selectedUris =
+                if (result.resultCode == RESULT_OK) {
+                    WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
+                } else {
+                    null
+                }
+            val pendingSlot = haloPendingAudioSlot
+            haloPendingAudioSlot = null
+
+            if (selectedUris.isNullOrEmpty() || pendingSlot == null) {
+                callback?.onReceiveValue(selectedUris)
+                return@registerForActivityResult
+            }
+
+            lifecycleScope.launch {
+                haloLastOperationStatus = "audio_saving"
+                val savedLocally =
+                    withContext(Dispatchers.IO) {
+                        haloAudioStore.save(pendingSlot, selectedUris.first())
+                    }
+
+                if (!savedLocally) {
+                    haloLastOperationStatus = "audio_invalid"
+                    showThemedToast(
+                        this@AbstractFlashcardViewer,
+                        "No se pudo guardar el audio HALO. Elige un MP3 de hasta 2 MB.",
+                        true,
+                    )
+                    callback?.onReceiveValue(null)
+                    return@launch
+                }
+
+                val publishedToAnkiMedia =
+                    runCatching {
+                        withCol {
+                            haloAudioStore.publishToCollection(pendingSlot, this)
+                        }
+                    }.onFailure { error ->
+                        Timber.w(error, "Could not publish HALO audio to collection.media")
+                    }.getOrDefault(false)
+
+                haloLastOperationStatus = if (publishedToAnkiMedia) "audio_ready" else "audio_local_only"
+                if (!publishedToAnkiMedia) {
+                    showThemedToast(
+                        this@AbstractFlashcardViewer,
+                        "El audio quedó guardado en HALO, pero no pudo prepararse para AnkiWeb.",
+                        true,
+                    )
+                }
+
+                // Returning the URI triggers the card's change event only after both writes finish.
+                callback?.onReceiveValue(selectedUris)
+            }
+        }
+
+    private val haloBackupExportLauncher =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+            if (uri == null) {
+                haloLastOperationStatus = "backup_export_cancelled"
+                return@registerForActivityResult
+            }
+            lifecycleScope.launch {
+                haloLastOperationStatus = "backup_exporting"
+                val success =
+                    withContext(Dispatchers.IO) {
+                        haloAudioStore.exportBackup(uri, haloSettingsStore)
+                    }
+                haloLastOperationStatus = if (success) "backup_exported" else "backup_export_failed"
+                showThemedToast(
+                    this@AbstractFlashcardViewer,
+                    if (success) "Respaldo HALO exportado correctamente." else "No se pudo exportar el respaldo HALO.",
+                    !success,
+                )
+            }
+        }
+
+    private val haloBackupImportLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri == null) {
+                haloLastOperationStatus = "backup_import_cancelled"
+                return@registerForActivityResult
+            }
+            lifecycleScope.launch {
+                haloLastOperationStatus = "backup_importing"
+                val importedCount =
+                    withContext(Dispatchers.IO) {
+                        haloAudioStore.importBackup(uri, haloSettingsStore)
+                    }
+                if (importedCount < 0) {
+                    haloLastOperationStatus = "backup_import_failed"
+                    showThemedToast(
+                        this@AbstractFlashcardViewer,
+                        "El archivo no es un respaldo HALO válido.",
+                        true,
+                    )
+                    return@launch
+                }
+
+                val repaired =
+                    runCatching {
+                        withCol {
+                            haloAudioStore.reconcileAll(this)
+                        }
+                    }.onFailure { error ->
+                        Timber.w(error, "Could not publish restored HALO audio to collection.media")
+                    }.getOrDefault(0)
+
+                haloLastOperationStatus = "backup_imported"
+                showThemedToast(
+                    this@AbstractFlashcardViewer,
+                    "Respaldo HALO restaurado: $importedCount audio(s), $repaired preparado(s) para AnkiWeb.",
+                    false,
+                )
+            }
+        }
+
+    private val haloDiagnosticsExportLauncher =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+            if (uri == null) {
+                haloLastOperationStatus = "diagnostics_cancelled"
+                return@registerForActivityResult
+            }
+            lifecycleScope.launch {
+                haloLastOperationStatus = "diagnostics_exporting"
+                val success =
+                    withContext(Dispatchers.IO) {
+                        haloAudioStore.exportDiagnostics(uri, haloSettingsStore)
+                    }
+                haloLastOperationStatus = if (success) "diagnostics_exported" else "diagnostics_failed"
+                showThemedToast(
+                    this@AbstractFlashcardViewer,
+                    if (success) "Diagnóstico HALO exportado." else "No se pudo exportar el diagnóstico HALO.",
+                    !success,
+                )
+            }
+        }
+
+    private inner class HaloAudioJavascriptBridge {
+        @JavascriptInterface
+        fun setPendingSlot(slot: String): Boolean {
+            val normalized = slot.lowercase()
+            if (!HaloAudioStore.isValidSlot(normalized)) return false
+            haloPendingAudioSlot = normalized
+            return true
+        }
+
+        @JavascriptInterface
+        fun hasAudio(slot: String): Boolean = haloAudioStore.hasAudio(slot.lowercase())
+
+        @JavascriptInterface
+        fun getAudioName(slot: String): String = haloAudioStore.getAudioName(slot.lowercase())
+
+        @JavascriptInterface
+        fun getAudioDataUrl(slot: String): String = haloAudioStore.getAudioDataUrl(slot.lowercase())
+
+        @JavascriptInterface
+        fun isSyncedToCollection(slot: String): Boolean = haloAudioStore.isSyncedToCollection(slot.lowercase())
+
+        @JavascriptInterface
+        fun getAudioState(slot: String): String = haloAudioStore.getAudioState(slot.lowercase())
+
+        @JavascriptInterface
+        fun getSyncedMediaName(slot: String): String = HaloAudioStore.syncedMediaName(slot.lowercase())
+
+        @JavascriptInterface
+        fun getGlobalSettingsJson(): String = haloSettingsStore.getSettingsJson()
+
+        @JavascriptInterface
+        fun saveGlobalSettingsJson(settingsJson: String): Boolean = haloSettingsStore.saveSettingsJson(settingsJson)
+
+        @JavascriptInterface
+        fun hasGlobalSettings(): Boolean = haloSettingsStore.hasInitializedSettings()
+
+        @JavascriptInterface
+        fun resetGlobalSettings(): Boolean {
+            haloSettingsStore.resetSettings()
+            haloLastOperationStatus = "settings_reset"
+            return true
+        }
+
+        @JavascriptInterface
+        fun isSafeMode(): Boolean = haloSettingsStore.isSafeMode()
+
+        @JavascriptInterface
+        fun setSafeMode(enabled: Boolean): Boolean {
+            haloSettingsStore.setSafeMode(enabled)
+            haloLastOperationStatus = if (enabled) "safe_mode_on" else "safe_mode_off"
+            return true
+        }
+
+        @JavascriptInterface
+        fun requestExportBackup(): Boolean {
+            haloLastOperationStatus = "backup_export_requested"
+            runOnUiThread {
+                haloBackupExportLauncher.launch("AnkiDroid-HALO-respaldo-V23.5.zip")
+            }
+            return true
+        }
+
+        @JavascriptInterface
+        fun requestImportBackup(): Boolean {
+            haloLastOperationStatus = "backup_import_requested"
+            runOnUiThread {
+                haloBackupImportLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
+            }
+            return true
+        }
+
+        @JavascriptInterface
+        fun requestExportDiagnostics(): Boolean {
+            haloLastOperationStatus = "diagnostics_requested"
+            runOnUiThread {
+                haloDiagnosticsExportLauncher.launch("AnkiDroid-HALO-diagnostico-V23.5.txt")
+            }
+            return true
+        }
+
+        @JavascriptInterface
+        fun getLastOperationStatus(): String = haloLastOperationStatus
+
+        /**
+         * Reconciles audio inherited from V22.1/V23 with Anki Media. This is intentionally
+         * asynchronous so the card UI stays responsive while the collection is accessed.
+         */
+        @JavascriptInterface
+        fun reconcileAllAudio(): Boolean {
+            if (!haloAudioReconcileInProgress.compareAndSet(false, true)) return false
+            lifecycleScope.launch {
+                try {
+                    val repaired =
+                        runCatching {
+                            withCol {
+                                haloAudioStore.reconcileAll(this)
+                            }
+                        }.onFailure { error ->
+                            Timber.w(error, "Could not reconcile HALO audio with collection.media")
+                        }.getOrDefault(0)
+                    Timber.i("HALO audio reconciliation finished: %d item(s) published", repaired)
+                } finally {
+                    haloAudioReconcileInProgress.set(false)
+                }
+            }
+            return true
+        }
+
+        @JavascriptInterface
+        fun isReconcileInProgress(): Boolean = haloAudioReconcileInProgress.get()
+
+        @JavascriptInterface
+        fun restoreAudio(slot: String): Boolean {
+            val normalized = slot.lowercase()
+            if (!HaloAudioStore.isValidSlot(normalized)) return false
+            val restoredLocally = haloAudioStore.restoreLocal(normalized)
+            lifecycleScope.launch {
+                runCatching {
+                    withCol {
+                        haloAudioStore.removeFromCollection(normalized, this)
+                    }
+                }.onFailure { error ->
+                    Timber.w(error, "Could not remove HALO audio from collection.media")
+                }
+            }
+            return restoredLocally
+        }
+
+        @JavascriptInterface
+        fun storageVersion(): Int = 4
+    }
+
+    private class HaloSettingsStore(private val context: Context) {
+        private val preferences: SharedPreferences by lazy {
+            context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+        }
+
+        fun hasInitializedSettings(): Boolean = preferences.getBoolean(INITIALIZED_KEY, false)
+
+        fun getSettingsJson(): String {
+            val json = JSONObject()
+            BOOLEAN_DEFAULTS.forEach { (key, defaultValue) ->
+                json.put(key, preferences.getBoolean(key, defaultValue))
+            }
+            INTEGER_DEFAULTS.forEach { (key, defaultValue) ->
+                json.put(key, preferences.getInt(key, defaultValue))
+            }
+            STRING_DEFAULTS.forEach { (key, defaultValue) ->
+                json.put(key, preferences.getString(key, defaultValue) ?: defaultValue)
+            }
+            json.put("settingsVersion", SETTINGS_SCHEMA_VERSION)
+            return json.toString()
+        }
+
+        @Synchronized
+        fun saveSettingsJson(settingsJson: String): Boolean {
+            return try {
+                val json = JSONObject(settingsJson)
+                val editor = preferences.edit()
+                BOOLEAN_DEFAULTS.forEach { (key, defaultValue) ->
+                    if (json.has(key)) editor.putBoolean(key, json.optBoolean(key, defaultValue))
+                }
+                INTEGER_DEFAULTS.forEach { (key, defaultValue) ->
+                    if (json.has(key)) {
+                        val value = json.optInt(key, defaultValue)
+                        editor.putInt(key, normalizeIntegerSetting(key, value))
+                    }
+                }
+                STRING_DEFAULTS.forEach { (key, defaultValue) ->
+                    if (json.has(key)) editor.putString(key, normalizeStringSetting(key, json.optString(key, defaultValue)))
+                }
+                editor.putBoolean(INITIALIZED_KEY, true)
+                    .putInt(SCHEMA_VERSION_KEY, SETTINGS_SCHEMA_VERSION)
+                    .commit()
+            } catch (error: Exception) {
+                Timber.w(error, "Could not persist HALO global settings")
+                false
+            }
+        }
+
+        fun resetSettings() {
+            preferences.edit().clear().commit()
+        }
+
+        fun isSafeMode(): Boolean = preferences.getBoolean("safeMode", false)
+
+        fun setSafeMode(enabled: Boolean) {
+            preferences.edit()
+                .putBoolean("safeMode", enabled)
+                .putBoolean(INITIALIZED_KEY, true)
+                .putInt(SCHEMA_VERSION_KEY, SETTINGS_SCHEMA_VERSION)
+                .commit()
+        }
+
+        private fun normalizeIntegerSetting(key: String, value: Int): Int =
+            when (key) {
+                "volumePercent" -> value.coerceIn(0, 100)
+                "advanceMs" -> value.coerceIn(500, 10000)
+                else -> value
+            }
+
+        private fun normalizeStringSetting(key: String, value: String): String =
+            when (key) {
+                "profile" -> if (value in VALID_PROFILES) value else "custom"
+                "theme" -> if (value in VALID_THEMES) value else "halo_blue_cyan"
+                else -> value.take(80)
+            }
+
+        companion object {
+            private const val PREFERENCES_NAME = "halo_global_settings_v235"
+            private const val INITIALIZED_KEY = "initialized"
+            private const val SCHEMA_VERSION_KEY = "settings_schema_version"
+            private const val SETTINGS_SCHEMA_VERSION = 1
+            private val BOOLEAN_DEFAULTS =
+                linkedMapOf(
+                    "masterEnabled" to true,
+                    "soundEnabled" to true,
+                    "finishSound" to true,
+                    "panelOpen" to false,
+                    "settingsLocked" to false,
+                    "animationsEnabled" to true,
+                    "reduceMotion" to false,
+                    "safeMode" to false,
+                )
+            private val INTEGER_DEFAULTS =
+                linkedMapOf(
+                    "volumePercent" to 70,
+                    "advanceMs" to 700,
+                )
+            private val STRING_DEFAULTS =
+                linkedMapOf(
+                    "profile" to "custom",
+                    "theme" to "halo_blue_cyan",
+                )
+            private val VALID_PROFILES = setOf("study", "fast", "balanced", "cinematic", "custom")
+            private val VALID_THEMES = setOf("halo_blue_cyan")
+        }
+    }
+
+    private class HaloAudioStore(private val context: Context) {
+        private val directory: File by lazy {
+            File(context.filesDir, DIRECTORY_NAME).apply { mkdirs() }
+        }
+        private val preferences: SharedPreferences by lazy {
+            context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+        }
+
+        init {
+            migrateLegacyStorage()
+        }
+
+        /**
+         * Persists an MP3 in HALO's private storage. This copy provides immediate playback and
+         * survives card/WebView recreation. [publishToCollection] creates the Anki-syncable copy.
+         */
+        @Synchronized
+        fun save(slot: String, uri: Uri): Boolean {
+            if (!isValidSlot(slot)) return false
+            val displayName = queryDisplayName(uri) ?: "halo_$slot.mp3"
+            val mimeType = resolveMp3MimeType(uri, displayName) ?: return false
+            val temporaryFile = File(directory, "$slot.tmp")
+            val targetFile = fileFor(slot)
+
+            return try {
+                var totalBytes = 0L
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    temporaryFile.outputStream().use { output ->
+                        val buffer = ByteArray(8192)
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            totalBytes += read
+                            if (totalBytes > MAX_FILE_SIZE_BYTES) {
+                                temporaryFile.delete()
+                                return false
+                            }
+                            output.write(buffer, 0, read)
+                        }
+                        output.flush()
+                        output.fd.sync()
+                    }
+                } ?: return false
+
+                if (totalBytes == 0L || !looksLikeMp3(temporaryFile)) {
+                    temporaryFile.delete()
+                    return false
+                }
+                if (targetFile.exists() && !targetFile.delete()) {
+                    temporaryFile.delete()
+                    return false
+                }
+                if (!temporaryFile.renameTo(targetFile)) {
+                    temporaryFile.copyTo(targetFile, overwrite = true)
+                    temporaryFile.delete()
+                }
+
+                saveMetadata(slot, displayName, mimeType, totalBytes, targetFile)
+            } catch (error: Exception) {
+                Timber.w(error, "Could not persist HALO audio for slot %s", slot)
+                temporaryFile.delete()
+                false
+            }
+        }
+
+        @Synchronized
+        private fun saveBytes(slot: String, bytes: ByteArray, displayName: String): Boolean {
+            if (!isValidSlot(slot) || bytes.isEmpty() || bytes.size > MAX_FILE_SIZE_BYTES) return false
+            val temporaryFile = File(directory, "$slot.import.tmp")
+            val targetFile = fileFor(slot)
+            return try {
+                temporaryFile.writeBytes(bytes)
+                if (!looksLikeMp3(temporaryFile)) {
+                    temporaryFile.delete()
+                    return false
+                }
+                if (targetFile.exists() && !targetFile.delete()) {
+                    temporaryFile.delete()
+                    return false
+                }
+                if (!temporaryFile.renameTo(targetFile)) {
+                    temporaryFile.copyTo(targetFile, overwrite = true)
+                    temporaryFile.delete()
+                }
+                saveMetadata(slot, displayName, "audio/mpeg", targetFile.length(), targetFile)
+            } catch (error: Exception) {
+                Timber.w(error, "Could not restore HALO audio for slot %s", slot)
+                temporaryFile.delete()
+                false
+            }
+        }
+
+        private fun saveMetadata(slot: String, displayName: String, mimeType: String, totalBytes: Long, targetFile: File): Boolean =
+            preferences.edit()
+                .putString(key(slot, "name"), displayName)
+                .putString(key(slot, "mime"), mimeType)
+                .putLong(key(slot, "size"), totalBytes)
+                .putString(key(slot, "hash"), sha256(targetFile))
+                .putBoolean(key(slot, "collection_ready"), false)
+                .remove(key(slot, "collection_name"))
+                .remove(key(slot, "collection_hash"))
+                .commit()
+
+        /**
+         * Adds the fixed-name copy to collection.media through Anki's backend. Using Media APIs is
+         * essential: the media database then records the change and AnkiWeb can sync it.
+         */
+        @Synchronized
+        fun publishToCollection(slot: String, collection: Collection): Boolean {
+            if (!hasAudio(slot)) return false
+            val source = fileFor(slot)
+            val desiredName = syncedMediaName(slot)
+            if (desiredName.isBlank()) return false
+
+            return try {
+                // Remove an older version first so addMediaFile can retain the fixed template name.
+                if (collection.media.have(desiredName)) {
+                    collection.media.trashFiles(listOf(desiredName))
+                }
+                val actualName = collection.media.writeData(desiredName, source.readBytes().toByteString())
+                val success = actualName == desiredName
+                if (!success && collection.media.have(actualName)) {
+                    collection.media.trashFiles(listOf(actualName))
+                }
+                preferences.edit()
+                    .putBoolean(key(slot, "collection_ready"), success)
+                    .putString(key(slot, "collection_name"), if (success) actualName else "")
+                    .putString(key(slot, "collection_hash"), if (success) sha256(source) else "")
+                    .commit()
+                success
+            } catch (error: Exception) {
+                Timber.w(error, "Could not publish HALO audio for slot %s", slot)
+                preferences.edit()
+                    .putBoolean(key(slot, "collection_ready"), false)
+                    .remove(key(slot, "collection_name"))
+                    .remove(key(slot, "collection_hash"))
+                    .commit()
+                false
+            }
+        }
+
+        @Synchronized
+        fun removeFromCollection(slot: String, collection: Collection): Boolean {
+            if (!isValidSlot(slot)) return false
+            val mediaName = syncedMediaName(slot)
+            return try {
+                if (collection.media.have(mediaName)) {
+                    collection.media.trashFiles(listOf(mediaName))
+                }
+                preferences.edit()
+                    .putBoolean(key(slot, "collection_ready"), false)
+                    .remove(key(slot, "collection_name"))
+                    .remove(key(slot, "collection_hash"))
+                    .commit()
+            } catch (error: Exception) {
+                Timber.w(error, "Could not remove HALO media for slot %s", slot)
+                false
+            }
+        }
+
+        fun hasAudio(slot: String): Boolean = isValidSlot(slot) && fileFor(slot).isFile
+
+        fun getAudioName(slot: String): String {
+            if (!hasAudio(slot)) return ""
+            return preferences.getString(key(slot, "name"), "SONIDO PERSONALIZADO")
+                ?: "SONIDO PERSONALIZADO"
+        }
+
+        fun getAudioDataUrl(slot: String): String {
+            if (!hasAudio(slot)) return ""
+            val file = fileFor(slot)
+            if (!looksLikeMp3(file)) return ""
+            return try {
+                val mimeType = preferences.getString(key(slot, "mime"), "audio/mpeg") ?: "audio/mpeg"
+                val encoded = Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
+                "data:$mimeType;base64,$encoded"
+            } catch (error: Exception) {
+                Timber.w(error, "Could not load HALO audio for slot %s", slot)
+                ""
+            }
+        }
+
+        fun isSyncedToCollection(slot: String): Boolean {
+            if (!isValidSlot(slot) || !hasAudio(slot)) return false
+            val localHash = preferences.getString(key(slot, "hash"), "").orEmpty()
+            val collectionHash = preferences.getString(key(slot, "collection_hash"), "").orEmpty()
+            val collectionName = preferences.getString(key(slot, "collection_name"), "").orEmpty()
+            return preferences.getBoolean(key(slot, "collection_ready"), false) &&
+                localHash.isNotBlank() &&
+                localHash == collectionHash &&
+                collectionName == syncedMediaName(slot)
+        }
+
+        fun getAudioState(slot: String): String {
+            if (!isValidSlot(slot) || !hasAudio(slot)) return "none"
+            if (!looksLikeMp3(fileFor(slot))) return "invalid"
+            if (isSyncedToCollection(slot)) return "ready"
+            val collectionHash = preferences.getString(key(slot, "collection_hash"), "").orEmpty()
+            return if (collectionHash.isBlank()) "local" else "changed"
+        }
+
+        /** Publishes only missing or stale private sounds; used for V22.1/V23 migration. */
+        @Synchronized
+        fun reconcileAll(collection: Collection): Int {
+            var repaired = 0
+            VALID_SLOTS.forEach { slot ->
+                if (!hasAudio(slot) || !looksLikeMp3(fileFor(slot))) return@forEach
+                val desiredName = syncedMediaName(slot)
+                val alreadyReady = isSyncedToCollection(slot) && collection.media.have(desiredName)
+                if (!alreadyReady && publishToCollection(slot, collection)) repaired += 1
+            }
+            return repaired
+        }
+
+        @Synchronized
+        fun restoreLocal(slot: String): Boolean {
+            if (!isValidSlot(slot)) return false
+            return try {
+                fileFor(slot).delete()
+                preferences.edit()
+                    .remove(key(slot, "name"))
+                    .remove(key(slot, "mime"))
+                    .remove(key(slot, "size"))
+                    .remove(key(slot, "hash"))
+                    .remove(key(slot, "collection_ready"))
+                    .remove(key(slot, "collection_name"))
+                    .remove(key(slot, "collection_hash"))
+                    .commit()
+            } catch (error: Exception) {
+                Timber.w(error, "Could not restore HALO audio for slot %s", slot)
+                false
+            }
+        }
+
+        @Synchronized
+        fun exportBackup(uri: Uri, settingsStore: HaloSettingsStore): Boolean {
+            return try {
+                context.contentResolver.openOutputStream(uri, "wt")?.use { rawOutput ->
+                    ZipOutputStream(BufferedOutputStream(rawOutput)).use { zip ->
+                        val manifest = JSONObject()
+                            .put("format", BACKUP_FORMAT)
+                            .put("version", BACKUP_VERSION)
+                            .put("settings", JSONObject(settingsStore.getSettingsJson()))
+                        val audioJson = JSONObject()
+                        VALID_SLOTS.forEach { slot ->
+                            val audioInfo = JSONObject()
+                                .put("present", hasAudio(slot))
+                                .put("name", getAudioName(slot))
+                                .put("state", getAudioState(slot))
+                            audioJson.put(slot, audioInfo)
+                            if (hasAudio(slot) && looksLikeMp3(fileFor(slot))) {
+                                zip.putNextEntry(ZipEntry("audio/$slot.mp3"))
+                                fileFor(slot).inputStream().use { input -> input.copyTo(zip) }
+                                zip.closeEntry()
+                            }
+                        }
+                        manifest.put("audio", audioJson)
+                        zip.putNextEntry(ZipEntry("manifest.json"))
+                        zip.write(manifest.toString(2).toByteArray(Charsets.UTF_8))
+                        zip.closeEntry()
+                    }
+                } ?: return false
+                true
+            } catch (error: Exception) {
+                Timber.w(error, "Could not export HALO backup")
+                false
+            }
+        }
+
+        @Synchronized
+        fun importBackup(uri: Uri, settingsStore: HaloSettingsStore): Int {
+            return try {
+                val audioBytes = mutableMapOf<String, ByteArray>()
+                var manifest: JSONObject? = null
+                var totalBytes = 0L
+                context.contentResolver.openInputStream(uri)?.use { rawInput ->
+                    ZipInputStream(BufferedInputStream(rawInput)).use { zip ->
+                        while (true) {
+                            val entry = zip.nextEntry ?: break
+                            val safeName = entry.name.replace('\\', '/')
+                            if (entry.isDirectory || safeName.contains("..") || safeName.startsWith('/')) {
+                                zip.closeEntry()
+                                continue
+                            }
+                            val bytes = zip.readBytesLimited(MAX_BACKUP_ENTRY_BYTES)
+                            totalBytes += bytes.size
+                            if (totalBytes > MAX_BACKUP_TOTAL_BYTES) return -1
+                            when {
+                                safeName == "manifest.json" -> manifest = JSONObject(String(bytes, Charsets.UTF_8))
+                                safeName.startsWith("audio/") && safeName.endsWith(".mp3") -> {
+                                    val slot = safeName.removePrefix("audio/").removeSuffix(".mp3")
+                                    if (isValidSlot(slot)) audioBytes[slot] = bytes
+                                }
+                            }
+                            zip.closeEntry()
+                        }
+                    }
+                } ?: return -1
+
+                val parsedManifest = manifest ?: return -1
+                if (parsedManifest.optString("format") != BACKUP_FORMAT) return -1
+                val settings = parsedManifest.optJSONObject("settings") ?: JSONObject()
+                if (!settingsStore.saveSettingsJson(settings.toString())) return -1
+                val audioManifest = parsedManifest.optJSONObject("audio") ?: JSONObject()
+                var imported = 0
+                audioBytes.forEach { (slot, bytes) ->
+                    val displayName = audioManifest.optJSONObject(slot)?.optString("name", "HALO RESTAURADO · $slot.mp3")
+                        ?: "HALO RESTAURADO · $slot.mp3"
+                    if (saveBytes(slot, bytes, displayName)) imported += 1
+                }
+                imported
+            } catch (error: Exception) {
+                Timber.w(error, "Could not import HALO backup")
+                -1
+            }
+        }
+
+        fun exportDiagnostics(uri: Uri, settingsStore: HaloSettingsStore): Boolean {
+            return try {
+                val diagnostics = StringBuilder()
+                    .appendLine("ANKIDROID HALO — DIAGNÓSTICO V23.5")
+                    .appendLine("Paquete: ${BuildConfig.APPLICATION_ID}")
+                    .appendLine("AnkiDroid base: ${BuildConfig.VERSION_NAME}")
+                    .appendLine("Motor HALO: V23.5")
+                    .appendLine("Almacenamiento de audio: $STORAGE_SCHEMA_VERSION")
+                    .appendLine("Configuración: ${settingsStore.getSettingsJson()}")
+                    .appendLine()
+                VALID_SLOTS.forEach { slot ->
+                    val file = fileFor(slot)
+                    diagnostics.appendLine(
+                        "$slot: state=${getAudioState(slot)}, present=${file.isFile}, size=${if (file.isFile) file.length() else 0}, name=${getAudioName(slot)}, hash=${if (file.isFile) sha256(file).take(16) else ""}",
+                    )
+                }
+                context.contentResolver.openOutputStream(uri, "wt")?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
+                    writer.write(diagnostics.toString())
+                } ?: return false
+                true
+            } catch (error: Exception) {
+                Timber.w(error, "Could not export HALO diagnostics")
+                false
+            }
+        }
+
+        /**
+         * V22.1 and V23 already used the same private directory. Recover any missing metadata,
+         * invalidate stale publication flags, and remove abandoned temporary files.
+         */
+        private fun migrateLegacyStorage() {
+            directory.listFiles { file -> file.name.endsWith(".tmp") }?.forEach { it.delete() }
+            var migratedItems = 0
+            VALID_SLOTS.forEach { slot ->
+                val file = fileFor(slot)
+                if (!file.isFile || file.length() <= 0L) return@forEach
+                val localHash = sha256(file)
+                val oldHash = preferences.getString(key(slot, "hash"), "").orEmpty()
+                val editor = preferences.edit()
+                    .putString(key(slot, "mime"), "audio/mpeg")
+                    .putLong(key(slot, "size"), file.length())
+                    .putString(key(slot, "hash"), localHash)
+                if (!preferences.contains(key(slot, "name"))) {
+                    editor.putString(key(slot, "name"), "SONIDO PERSONALIZADO MIGRADO")
+                    migratedItems += 1
+                }
+                val publishedHash = preferences.getString(key(slot, "collection_hash"), "").orEmpty()
+                val publishedName = preferences.getString(key(slot, "collection_name"), "").orEmpty()
+                if (publishedHash != localHash || publishedName != syncedMediaName(slot)) {
+                    editor.putBoolean(key(slot, "collection_ready"), false)
+                    editor.remove(key(slot, "collection_name"))
+                    editor.remove(key(slot, "collection_hash"))
+                }
+                if (oldHash.isBlank()) migratedItems += 1
+                editor.commit()
+            }
+            preferences.edit()
+                .putInt(SCHEMA_VERSION_KEY, STORAGE_SCHEMA_VERSION)
+                .putInt(LAST_MIGRATION_COUNT_KEY, migratedItems)
+                .commit()
+        }
+
+        private fun looksLikeMp3(file: File): Boolean {
+            if (!file.isFile || file.length() < 3L) return false
+            return try {
+                file.inputStream().buffered().use { input ->
+                    val header = ByteArray(4096)
+                    val count = input.read(header)
+                    if (count >= 3 && header[0] == 'I'.code.toByte() && header[1] == 'D'.code.toByte() && header[2] == '3'.code.toByte()) {
+                        true
+                    } else {
+                        (0 until (count - 1).coerceAtLeast(0)).any { index ->
+                            (header[index].toInt() and 0xff) == 0xff &&
+                                (header[index + 1].toInt() and 0xe0) == 0xe0
+                        }
+                    }
+                }
+            } catch (error: Exception) {
+                false
+            }
+        }
+
+        private fun queryDisplayName(uri: Uri): String? {
+            return try {
+                context.contentResolver.query(
+                    uri,
+                    arrayOf(OpenableColumns.DISPLAY_NAME),
+                    null,
+                    null,
+                    null,
+                )?.use { cursor ->
+                    val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
+                }
+            } catch (error: Exception) {
+                null
+            }
+        }
+
+        private fun resolveMp3MimeType(uri: Uri, displayName: String): String? {
+            val resolverType = context.contentResolver.getType(uri)?.lowercase()
+            if (resolverType in MP3_MIME_TYPES) return "audio/mpeg"
+            val extension = MimeTypeMap.getFileExtensionFromUrl(displayName).lowercase()
+            return if (extension == "mp3") "audio/mpeg" else null
+        }
+
+        private fun sha256(file: File): String {
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    digest.update(buffer, 0, read)
+                }
+            }
+            return digest.digest().joinToString("") { byte -> (byte.toInt() and 0xff).toString(16).padStart(2, '0') }
+        }
+
+        private fun ZipInputStream.readBytesLimited(limit: Int): ByteArray {
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(8192)
+            var total = 0
+            while (true) {
+                val read = read(buffer)
+                if (read < 0) break
+                total += read
+                if (total > limit) throw IllegalArgumentException("HALO backup entry is too large")
+                output.write(buffer, 0, read)
+            }
+            return output.toByteArray()
+        }
+
+        private fun fileFor(slot: String): File = File(directory, "$slot.audio")
+
+        private fun key(slot: String, suffix: String): String = "$slot.$suffix"
+
+        companion object {
+            private const val DIRECTORY_NAME = "halo_custom_audio"
+            private const val PREFERENCES_NAME = "halo_custom_audio_preferences"
+            private const val MAX_FILE_SIZE_BYTES = 2L * 1024L * 1024L
+            private const val MAX_BACKUP_ENTRY_BYTES = 3 * 1024 * 1024
+            private const val MAX_BACKUP_TOTAL_BYTES = 12L * 1024L * 1024L
+            private const val BACKUP_FORMAT = "ankidroid-halo-backup"
+            private const val BACKUP_VERSION = 1
+            private const val SCHEMA_VERSION_KEY = "storage_schema_version"
+            private const val LAST_MIGRATION_COUNT_KEY = "last_migration_count"
+            private const val STORAGE_SCHEMA_VERSION = 4
+            private val VALID_SLOTS = setOf("again", "hard", "good", "easy")
+            private val MP3_MIME_TYPES = setOf("audio/mpeg", "audio/mp3", "audio/x-mp3")
+
+            fun isValidSlot(slot: String): Boolean = slot in VALID_SLOTS
+
+            fun syncedMediaName(slot: String): String =
+                if (isValidSlot(slot)) "_halo_synced_$slot.mp3" else ""
+        }
+    }
+
 
     private val defaultOnBackCallback =
         object : OnBackPressedCallback(enabled = true) {
@@ -659,6 +1546,9 @@ abstract class AbstractFlashcardViewer :
     }
 
     override fun onDestroy() {
+        haloFilePathCallback?.onReceiveValue(null)
+        haloFilePathCallback = null
+        haloPendingAudioSlot = null
         super.onDestroy()
         if (this::server.isInitialized) {
             server.stop()
@@ -1045,6 +1935,7 @@ abstract class AbstractFlashcardViewer :
                     // enable dom storage so that sessionStorage & localStorage can be used in webview
                     domStorageEnabled = true
                 }
+                addJavascriptInterface(HaloAudioJavascriptBridge(), "HaloAudioNative")
                 webChromeClient = AnkiDroidWebChromeClient()
                 isFocusableInTouchMode = typeAnswer!!.useInputTag
                 isScrollbarFadingEnabled = true
@@ -1903,6 +2794,53 @@ abstract class AbstractFlashcardViewer :
             return true
         }
 
+        override fun onShowFileChooser(
+            webView: WebView?,
+            filePathCallback: ValueCallback<Array<Uri>>,
+            fileChooserParams: FileChooserParams,
+        ): Boolean {
+            // Only the active reviewer WebView may request a file.
+            if (webView !== this@AbstractFlashcardViewer.webView) {
+                filePathCallback.onReceiveValue(null)
+                return false
+            }
+
+            // HALO cards request audio/*; reject unrelated file requests.
+            val acceptedTypes = fileChooserParams.acceptTypes.filter { it.isNotBlank() }
+            if (acceptedTypes.isNotEmpty() && acceptedTypes.none { it.startsWith("audio/") }) {
+                filePathCallback.onReceiveValue(null)
+                return false
+            }
+
+            // Cancel any previous pending request before opening a new picker.
+            haloFilePathCallback?.onReceiveValue(null)
+            haloFilePathCallback = filePathCallback
+
+            val audioPicker =
+                Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "audio/*"
+                    putExtra(
+                        Intent.EXTRA_MIME_TYPES,
+                        arrayOf(
+                            "audio/mpeg",
+                            "audio/mp3",
+                            "audio/x-mp3",
+                        ),
+                    )
+                }
+
+            return try {
+                haloFileChooserLauncher.launch(audioPicker)
+                true
+            } catch (error: ActivityNotFoundException) {
+                Timber.w(error, "No audio file picker is available")
+                haloFilePathCallback?.onReceiveValue(null)
+                haloFilePathCallback = null
+                false
+            }
+        }
+
         private lateinit var customView: View
 
         override fun onPermissionRequest(request: PermissionRequest) {
@@ -2490,7 +3428,6 @@ abstract class AbstractFlashcardViewer :
 
             // card.html reload
             if (url.startsWith("signal:reload_card_html")) {
-                redrawCard()
                 return true
             }
 
