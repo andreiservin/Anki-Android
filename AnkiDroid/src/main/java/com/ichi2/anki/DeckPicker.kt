@@ -2248,13 +2248,13 @@ open class DeckPicker :
             }
             haloDeckStatusStore.rememberLastStudiedDeck(lastDeck.deckId, currentName)
             binding.rootLayout.post {
-                Snackbar.make(
-                    binding.rootLayout,
-                    getString(R.string.halo_continue_message, currentName),
-                    Snackbar.LENGTH_LONG,
-                ).setAction(R.string.halo_continue_action) {
-                    onDeckClick(lastDeck.deckId, DeckSelectionType.SKIP_STUDY_OPTIONS)
-                }.show()
+                AlertDialog
+                    .Builder(this@DeckPicker)
+                    .setMessage(getString(R.string.halo_continue_message, currentName))
+                    .setPositiveButton(R.string.dialog_continue) { _, _ ->
+                        onDeckClick(lastDeck.deckId, DeckSelectionType.SKIP_STUDY_OPTIONS)
+                    }.setNegativeButton(R.string.dialog_cancel, null)
+                    .show()
             }
         }
     }

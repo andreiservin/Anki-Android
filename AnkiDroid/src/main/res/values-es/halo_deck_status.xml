@@ -75,6 +75,5 @@
     <string name="halo_filter_only_protected">Mostrar solo mazos protegidos</string>
     <string name="halo_organize_continue_last">Continuar el último mazo estudiado</string>
     <string name="halo_continue_message">¿Continuar estudiando %1$s?</string>
-    <string name="halo_continue_action">Continuar</string>
     <string name="halo_continue_unavailable">No existe un mazo reciente válido para continuar</string>
 </resources>
