@@ -1045,6 +1045,7 @@ open class DeckPicker :
                 resetCounts = true,
             )
             HaloDeckResetLog(this@DeckPicker).append(
+                timestamp = TimeManager.time.intTimeMS(),
                 deckId = plan.deckId,
                 deckName = plan.deckName,
                 includeSubdecks = plan.includeSubdecks,

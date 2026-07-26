@@ -26,6 +26,7 @@ class HaloDeckResetLog(context: Context) {
         context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
     fun append(
+        timestamp: Long,
         deckId: Long,
         deckName: String,
         includeSubdecks: Boolean,
@@ -39,7 +40,7 @@ class HaloDeckResetLog(context: Context) {
 
         history.put(
             JSONObject()
-                .put("timestamp", System.currentTimeMillis())
+                .put("timestamp", timestamp)
                 .put("deckId", deckId)
                 .put("deckName", deckName)
                 .put("includeSubdecks", includeSubdecks)
