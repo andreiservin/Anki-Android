@@ -69,6 +69,7 @@ class DeckPickerContextMenu : AnalyticsDialogFragment() {
         DECK_OPTIONS(R.string.menu__deck_options),
         COLOR_AND_STATUS(R.string.halo_deck_color_and_status),
         HALO_ORGANIZE(R.string.halo_deck_organize),
+        HALO_RESET_DECK(R.string.halo_reset_deck),
         CUSTOM_STUDY(R.string.custom_study),
         DELETE_DECK(R.string.contextmenu_deckpicker_delete_deck),
         EXPORT_DECK(R.string.export_deck),

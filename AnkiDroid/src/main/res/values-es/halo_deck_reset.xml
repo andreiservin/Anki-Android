@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="halo_reset_deck">Reiniciar progreso del mazo con HALO</string>
+    <string name="halo_reset_scope_title">Elegir alcance del reinicio HALO</string>
+    <string name="halo_reset_scope_only">Solo este mazo — %1$d tarjeta(s)</string>
+    <string name="halo_reset_scope_with_subdecks">Este mazo y %1$d submazo(s) — %2$d tarjeta(s)</string>
+    <string name="halo_reset_no_cards">No se encontraron tarjetas en el alcance de reinicio HALO seleccionado.</string>
+    <string name="halo_reset_confirm_title">Revisar reinicio de mazo HALO</string>
+    <string name="halo_reset_scope_only_summary">Alcance HALO: solo el mazo seleccionado</string>
+    <string name="halo_reset_scope_with_children_summary">Alcance HALO: mazo seleccionado y todos sus submazos</string>
+    <string name="halo_reset_confirm_message">Mazo: %1$s\nAlcance: %2$s\nTarjetas que se reiniciarán: %3$d\n\nSe conservarán preguntas, respuestas, medios, etiquetas, plantillas y ajustes del mazo. Primero se creará un respaldo de la colección.</string>
+    <string name="halo_reset_continue">Continuar a la confirmación final HALO</string>
+    <string name="halo_reset_final_title">Confirmación final del reinicio HALO</string>
+    <string name="halo_reset_final_message">¿Reiniciar ahora %1$d tarjeta(s) y devolverlas a Nuevas? Se reiniciarán programación, intervalos, repeticiones y lapsos. El respaldo de seguridad quedará disponible para recuperación.</string>
+    <string name="halo_reset_now">Crear respaldo y reiniciar el mazo con HALO</string>
+    <string name="halo_reset_backup_progress">Creando respaldo de seguridad HALO antes de reiniciar el mazo…</string>
+</resources>

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="halo_reset_deck">Reset deck progress with HALO</string>
+    <string name="halo_reset_scope_title">Choose HALO deck reset range</string>
+    <string name="halo_reset_scope_only">Only this deck — %1$d card(s)</string>
+    <string name="halo_reset_scope_with_subdecks">This deck plus %1$d subdeck(s) — %2$d card(s)</string>
+    <string name="halo_reset_no_cards">No cards were found in the selected HALO reset range.</string>
+    <string name="halo_reset_confirm_title">Review HALO deck reset</string>
+    <string name="halo_reset_scope_only_summary">HALO range: selected deck only</string>
+    <string name="halo_reset_scope_with_children_summary">HALO range: selected deck and all subdecks</string>
+    <string name="halo_reset_confirm_message">Deck: %1$s\nRange: %2$s\nCards to reset: %3$d\n\nQuestions, answers, media, tags, templates, and deck settings will be kept. A collection backup will be created first.</string>
+    <string name="halo_reset_continue">Continue to HALO final confirmation</string>
+    <string name="halo_reset_final_title">Final HALO deck reset confirmation</string>
+    <string name="halo_reset_final_message">Reset %1$d card(s) to New now? Scheduling, intervals, repetitions, and lapse counts will be reset. The safety backup will remain available for recovery.</string>
+    <string name="halo_reset_now">Create backup and reset deck with HALO</string>
+    <string name="halo_reset_backup_progress">Creating HALO safety backup before resetting the deck…</string>
+</resources>

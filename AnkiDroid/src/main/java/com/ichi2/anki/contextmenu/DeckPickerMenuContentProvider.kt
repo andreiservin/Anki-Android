@@ -107,6 +107,7 @@ class DeckPickerMenuContentProvider(
                 add(DeckPickerContextMenu.DeckPickerContextMenuOption.COLOR_AND_STATUS)
                 add(DeckPickerContextMenu.DeckPickerContextMenuOption.HALO_ORGANIZE)
                 if (!isDynamic) {
+                    add(DeckPickerContextMenu.DeckPickerContextMenuOption.HALO_RESET_DECK)
                     add(DeckPickerContextMenu.DeckPickerContextMenuOption.CUSTOM_STUDY)
                 }
                 add(DeckPickerContextMenu.DeckPickerContextMenuOption.EXPORT_DECK)

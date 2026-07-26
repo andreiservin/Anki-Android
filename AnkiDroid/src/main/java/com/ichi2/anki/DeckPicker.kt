@@ -141,11 +141,13 @@ import com.ichi2.anki.dialogs.customstudy.CustomStudyDialog.CustomStudyAction.Co
 import com.ichi2.anki.dialogs.setDeckPickerContextMenuResultListener
 import com.ichi2.anki.export.ExportDialogFragment
 import com.ichi2.anki.filtered.FilteredDeckOptionsFragment
+import com.ichi2.anki.halo.HaloDeckResetLog
 import com.ichi2.anki.halo.HaloDeckStatus
 import com.ichi2.anki.halo.HaloDeckStatusStore
 import com.ichi2.anki.introduction.CollectionPermissionScreenLauncher
 import com.ichi2.anki.introduction.hasCollectionStoragePermissions
 import com.ichi2.anki.libanki.DeckId
+import com.ichi2.anki.libanki.Utils
 import com.ichi2.anki.libanki.sched.DeckNode
 import com.ichi2.anki.mediacheck.MediaCheckFragment
 import com.ichi2.anki.observability.ChangeManager
@@ -158,6 +160,7 @@ import com.ichi2.anki.preferences.sharedPrefs
 import com.ichi2.anki.receiver.SdCardReceiver
 import com.ichi2.anki.reviewreminders.ReviewRemindersDatabase
 import com.ichi2.anki.servicelayer.ScopedStorageService
+import com.ichi2.anki.servicelayer.resetCards
 import com.ichi2.anki.settings.Prefs
 import com.ichi2.anki.snackbar.BaseSnackbarBuilderProvider
 import com.ichi2.anki.snackbar.SnackbarBuilder
@@ -859,6 +862,10 @@ open class DeckPicker :
                 Timber.i("ContextMenu: HALO organizer selected")
                 showHaloDeckOrganizerDialog()
             }
+            DeckPickerContextMenuOption.HALO_RESET_DECK -> {
+                Timber.i("ContextMenu: HALO reset deck selected for deck %d", deckId)
+                showHaloResetDeckScopeDialog(deckId)
+            }
             DeckPickerContextMenuOption.CUSTOM_STUDY -> {
                 Timber.i("ContextMenu: Custom study option selected")
                 showDialogFragment(CustomStudyDialog.createInstance(deckId))
@@ -915,6 +922,136 @@ open class DeckPicker :
                 viewModel.scheduleReviewReminders(deckId)
                 dismissAllDialogFragments()
             }
+        }
+    }
+
+
+    private data class HaloDeckResetPlan(
+        val deckId: DeckId,
+        val deckName: String,
+        val includeSubdecks: Boolean,
+        val subdeckCount: Int,
+        val cardIds: List<Long>,
+    )
+
+    private fun showHaloResetDeckScopeDialog(deckId: DeckId) {
+        launchCatchingTask {
+            val onlyDeckPlan = buildHaloDeckResetPlan(deckId, includeSubdecks = false)
+            val withSubdecksPlan = buildHaloDeckResetPlan(deckId, includeSubdecks = true)
+
+            if (withSubdecksPlan.cardIds.isEmpty()) {
+                postSnackbar(getString(R.string.halo_reset_no_cards), Snackbar.LENGTH_SHORT)
+                return@launchCatchingTask
+            }
+
+            val options =
+                arrayOf(
+                    getString(R.string.halo_reset_scope_only, onlyDeckPlan.cardIds.size),
+                    getString(
+                        R.string.halo_reset_scope_with_subdecks,
+                        withSubdecksPlan.subdeckCount,
+                        withSubdecksPlan.cardIds.size,
+                    ),
+                )
+
+            AlertDialog
+                .Builder(this@DeckPicker)
+                .setTitle(R.string.halo_reset_scope_title)
+                .setItems(options) { _, selected ->
+                    val plan = if (selected == 1) withSubdecksPlan else onlyDeckPlan
+                    if (plan.cardIds.isEmpty()) {
+                        postSnackbar(getString(R.string.halo_reset_no_cards), Snackbar.LENGTH_SHORT)
+                    } else {
+                        showHaloResetFirstConfirmation(plan)
+                    }
+                }.setNegativeButton(R.string.dialog_cancel, null)
+                .show()
+        }
+    }
+
+    private suspend fun buildHaloDeckResetPlan(
+        deckId: DeckId,
+        includeSubdecks: Boolean,
+    ): HaloDeckResetPlan =
+        withCol {
+            require(!decks.isFiltered(deckId)) {
+                "Filtered decks cannot be reset with HALO deck reset"
+            }
+            val deckIds =
+                if (includeSubdecks) {
+                    decks.deckAndChildIds(deckId)
+                } else {
+                    listOf(deckId)
+                }
+            val sqlIds = Utils.ids2str(deckIds)
+            val cardIds =
+                db.queryLongList(
+                    "SELECT id FROM cards WHERE did IN $sqlIds OR odid IN $sqlIds",
+                )
+            HaloDeckResetPlan(
+                deckId = deckId,
+                deckName = decks.name(deckId),
+                includeSubdecks = includeSubdecks,
+                subdeckCount = (deckIds.size - 1).coerceAtLeast(0),
+                cardIds = cardIds,
+            )
+        }
+
+    private fun showHaloResetFirstConfirmation(plan: HaloDeckResetPlan) {
+        val scope =
+            getString(
+                if (plan.includeSubdecks) {
+                    R.string.halo_reset_scope_with_children_summary
+                } else {
+                    R.string.halo_reset_scope_only_summary
+                },
+            )
+
+        AlertDialog
+            .Builder(this)
+            .setTitle(R.string.halo_reset_confirm_title)
+            .setMessage(
+                getString(
+                    R.string.halo_reset_confirm_message,
+                    plan.deckName,
+                    scope,
+                    plan.cardIds.size,
+                ),
+            ).setPositiveButton(R.string.halo_reset_continue) { _, _ ->
+                showHaloResetFinalConfirmation(plan)
+            }.setNegativeButton(R.string.dialog_cancel, null)
+            .show()
+    }
+
+    private fun showHaloResetFinalConfirmation(plan: HaloDeckResetPlan) {
+        AlertDialog
+            .Builder(this)
+            .setTitle(R.string.halo_reset_final_title)
+            .setMessage(getString(R.string.halo_reset_final_message, plan.cardIds.size))
+            .setPositiveButton(R.string.halo_reset_now) { _, _ ->
+                executeHaloDeckReset(plan)
+            }.setNegativeButton(R.string.dialog_cancel, null)
+            .show()
+    }
+
+    private fun executeHaloDeckReset(plan: HaloDeckResetPlan) {
+        launchCatchingTask {
+            withProgress(message = getString(R.string.halo_reset_backup_progress)) {
+                performBackupInBackground(force = true)
+            }
+            resetCards(
+                cardIds = plan.cardIds,
+                restorePosition = true,
+                resetCounts = true,
+            )
+            HaloDeckResetLog(this@DeckPicker).append(
+                deckId = plan.deckId,
+                deckName = plan.deckName,
+                includeSubdecks = plan.includeSubdecks,
+                subdeckCount = plan.subdeckCount,
+                cardCount = plan.cardIds.size,
+            )
+            viewModel.reloadDeckCounts().join()
         }
     }
 
