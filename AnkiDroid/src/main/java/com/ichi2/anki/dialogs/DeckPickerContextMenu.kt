@@ -16,6 +16,7 @@
 package com.ichi2.anki.dialogs
 
 import android.app.Dialog
+import android.content.Context
 import android.os.Bundle
 import androidx.annotation.StringRes
 import androidx.annotation.VisibleForTesting
@@ -27,6 +28,7 @@ import com.ichi2.anki.R
 import com.ichi2.anki.analytics.AnalyticsDialogFragment
 import com.ichi2.anki.compat.requireSerializableCompat
 import com.ichi2.anki.contextmenu.DeckPickerMenuContentProvider
+import com.ichi2.anki.halo.HaloDeckStatusStore
 import com.ichi2.anki.dialogs.DeckPickerContextMenu.DeckPickerContextMenuOption
 import com.ichi2.anki.libanki.DeckId
 import com.ichi2.anki.utils.ext.requireLong
@@ -41,11 +43,12 @@ class DeckPickerContextMenu : AnalyticsDialogFragment() {
         require(requireArguments().containsKey(ARG_DECK_IS_DYN)) { "Missing argument deck is dynamic" }
         require(requireArguments().containsKey(ARG_DECK_HAS_BURIED_IN_DECK)) { "Missing argument deck has buried" }
         val options = createOptionsList()
+        val deckId = requireArguments().getLong(ARG_DECK_ID)
         return AlertDialog
             .Builder(requireActivity())
             .title(text = requireArguments().getString(ARG_DECK_NAME))
             .setItems(
-                options.map { resources.getString(it.optionName) }.toTypedArray(),
+                options.map { it.label(requireContext(), deckId) }.toTypedArray(),
             ) { _, index: Int ->
                 parentFragmentManager.setDeckPickerContextMenuResult(
                     DeckPickerContextMenuResult(
@@ -68,10 +71,10 @@ class DeckPickerContextMenu : AnalyticsDialogFragment() {
         RENAME_DECK(R.string.rename_deck),
         DECK_OPTIONS(R.string.menu__deck_options),
         COLOR_AND_STATUS(R.string.halo_deck_color_and_status),
-        HALO_ORGANIZE(R.string.halo_deck_organize),
         HALO_FAVORITE(R.string.halo_favorite_toggle),
         HALO_PIN(R.string.halo_pin_toggle),
         HALO_PROTECT(R.string.halo_protect_toggle),
+        HALO_SELECT(R.string.halo_select_toggle),
         HALO_RESET_DECK(R.string.halo_reset_deck),
         CUSTOM_STUDY(R.string.custom_study),
         DELETE_DECK(R.string.contextmenu_deckpicker_delete_deck),
@@ -85,6 +88,41 @@ class DeckPickerContextMenu : AnalyticsDialogFragment() {
         EDIT_DESCRIPTION(R.string.edit_deck_description),
         ADD_CARD(R.string.menu_add),
         SCHEDULE_REMINDERS(R.string.schedule_reminders_do_not_translate),
+        ;
+
+        fun label(
+            context: Context,
+            deckId: DeckId,
+        ): String {
+            val store = HaloDeckStatusStore(context)
+            val labelRes =
+                when (this) {
+                    COLOR_AND_STATUS -> R.string.halo_menu_color_status
+                    HALO_FAVORITE ->
+                        if (store.isFavorite(deckId)) {
+                            R.string.halo_favorite_remove
+                        } else {
+                            R.string.halo_favorite_add
+                        }
+                    HALO_PIN ->
+                        if (store.isPinned(deckId)) R.string.halo_pin_remove else R.string.halo_pin_add
+                    HALO_PROTECT ->
+                        if (store.isProtected(deckId)) {
+                            R.string.halo_protect_remove
+                        } else {
+                            R.string.halo_protect_add
+                        }
+                    HALO_SELECT ->
+                        if (store.isSelected(deckId)) {
+                            R.string.halo_select_remove
+                        } else {
+                            R.string.halo_select_add
+                        }
+                    HALO_RESET_DECK -> R.string.halo_menu_reset
+                    else -> optionName
+                }
+            return context.getString(labelRes)
+        }
     }
 
     companion object {

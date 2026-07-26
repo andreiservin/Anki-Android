@@ -275,7 +275,6 @@ open class DeckPicker :
     private lateinit var decksLayoutManager: LinearLayoutManager
     private lateinit var deckListAdapter: DeckAdapter
     private val haloDeckStatusStore by lazy { HaloDeckStatusStore(this) }
-    private var haloContinuePromptShown = false
     private lateinit var pullToSyncWrapper: SwipeRefreshLayout
 
     private lateinit var floatingActionMenu: DeckPickerFloatingActionMenu
@@ -595,8 +594,6 @@ open class DeckPicker :
             Timber.d("Opening study screen from DeckPicker's study options panel")
             launchCatchingTask {
                 val deckId = viewModel.focusedDeck ?: withCol { decks.selected() }
-                val deckName = withCol { decks.name(deckId) }
-                haloDeckStatusStore.rememberLastStudiedDeck(deckId, deckName)
                 openReviewer()
             }
         }
@@ -734,7 +731,6 @@ open class DeckPicker :
                 data = deckList.data,
                 hasSubDecks = deckList.hasSubDecks,
             )
-            maybeShowHaloContinueLastDeck()
         }
 
         fun onFocusedDeckChanged(deckId: DeckId?) {
@@ -874,10 +870,6 @@ open class DeckPicker :
                 Timber.i("ContextMenu: HALO color and status selected for deck %d", deckId)
                 showHaloDeckStatusDialog(deckId)
             }
-            DeckPickerContextMenuOption.HALO_ORGANIZE -> {
-                Timber.i("ContextMenu: HALO organizer selected")
-                showHaloDeckOrganizerDialog()
-            }
             DeckPickerContextMenuOption.HALO_FAVORITE -> {
                 Timber.i("ContextMenu: HALO favorite toggled for deck %d", deckId)
                 toggleHaloFavorite(deckId)
@@ -889,6 +881,10 @@ open class DeckPicker :
             DeckPickerContextMenuOption.HALO_PROTECT -> {
                 Timber.i("ContextMenu: HALO protection toggled for deck %d", deckId)
                 toggleHaloProtected(deckId)
+            }
+            DeckPickerContextMenuOption.HALO_SELECT -> {
+                Timber.i("ContextMenu: HALO active selection toggled for deck %d", deckId)
+                toggleHaloSelected(deckId)
             }
             DeckPickerContextMenuOption.HALO_RESET_DECK -> {
                 Timber.i("ContextMenu: HALO reset deck selected for deck %d", deckId)
@@ -1210,6 +1206,17 @@ open class DeckPicker :
             .show()
     }
 
+    private fun toggleHaloSelected(deckId: DeckId) {
+        val selected = haloDeckStatusStore.toggleSelected(deckId)
+        deckListAdapter.refreshHaloAll()
+        postSnackbar(
+            getString(
+                if (selected) R.string.halo_select_added else R.string.halo_select_removed,
+            ),
+            Snackbar.LENGTH_SHORT,
+        )
+    }
+
     private fun blockProtectedDeckAction(
         deckId: DeckId,
         messageRes: Int,
@@ -1342,7 +1349,7 @@ open class DeckPicker :
                     result.favoritesRemoved,
                     result.pinnedRemoved,
                     result.protectedRemoved,
-                    result.lastDeckReferencesRemoved,
+                    result.selectedDeckReferencesRemoved,
                 ),
                 Snackbar.LENGTH_SHORT,
             )
@@ -2228,48 +2235,6 @@ open class DeckPicker :
         }
     }
 
-    private fun maybeShowHaloContinueLastDeck() {
-        if (haloContinuePromptShown) return
-        haloContinuePromptShown = true
-        val lastDeck = haloDeckStatusStore.lastStudiedDeck() ?: return
-        launchCatchingTask {
-            val currentName =
-                withCol {
-                    decks
-                        .allNamesAndIds(
-                            includeFiltered = true,
-                            skipEmptyDefault = false,
-                        ).firstOrNull { it.id == lastDeck.deckId }
-                        ?.name
-                }
-            if (currentName == null) {
-                haloDeckStatusStore.clearLastStudiedDeck()
-                return@launchCatchingTask
-            }
-            haloDeckStatusStore.rememberLastStudiedDeck(lastDeck.deckId, currentName)
-            binding.rootLayout.post {
-                AlertDialog
-                    .Builder(this@DeckPicker)
-                    .setMessage(getString(R.string.halo_continue_message, currentName))
-                    .setPositiveButton(R.string.dialog_continue) { _, _ ->
-                        onDeckClick(lastDeck.deckId, DeckSelectionType.SKIP_STUDY_OPTIONS)
-                    }.setNegativeButton(R.string.dialog_cancel, null)
-                    .show()
-            }
-        }
-    }
-
-    private fun continueHaloLastStudiedDeck(showUnavailableMessage: Boolean) {
-        val lastDeck = haloDeckStatusStore.lastStudiedDeck()
-        if (lastDeck == null) {
-            if (showUnavailableMessage) {
-                postSnackbar(getString(R.string.halo_continue_unavailable), Snackbar.LENGTH_SHORT)
-            }
-            return
-        }
-        onDeckClick(lastDeck.deckId, DeckSelectionType.SKIP_STUDY_OPTIONS)
-    }
-
     private fun showHaloImportDialogIfAllowed() {
         if (!haloDeckStatusStore.hasProtectedDecks()) {
             showImportDialog()
@@ -2496,17 +2461,14 @@ open class DeckPicker :
     private fun openReviewerOrStudyOptions(
         selectionType: DeckSelectionType,
         deckId: DeckId,
-        deckName: String,
     ) {
         when (selectionType) {
             DeckSelectionType.DEFAULT -> {
                 if (tryShowStudyOptionsPanel()) return
-                haloDeckStatusStore.rememberLastStudiedDeck(deckId, deckName)
                 openReviewer()
             }
             DeckSelectionType.SHOW_STUDY_OPTIONS -> openStudyOptions()
             DeckSelectionType.SKIP_STUDY_OPTIONS -> {
-                haloDeckStatusStore.rememberLastStudiedDeck(deckId, deckName)
                 openReviewer()
             }
         }
@@ -2547,10 +2509,9 @@ open class DeckPicker :
         viewModel.focusedDeck = did
 
         // TODO: Reuse dueTree from ViewModel instead of recalculating for better performance.
-        val deckName = withCol { decks.name(did) }
         val deck = withCol { sched.deckDueTree().find(did) }
         if (deck?.hasCardsReadyToStudy() == true) {
-            openReviewerOrStudyOptions(selectionType, did, deckName)
+            openReviewerOrStudyOptions(selectionType, did)
             return
         }
 

@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version='1.0' encoding='utf-8'?>
 <resources>
     <string name="halo_deck_color_and_status">Color y estado</string>
     <string name="halo_deck_organize">Organización de mazos HALO</string>
@@ -9,7 +9,7 @@
     <string name="halo_deck_status_learned">Aprendido</string>
     <string name="halo_deck_status_special_review">Repaso especial</string>
     <string name="halo_deck_status_paused">Pausado</string>
-<string name="halo_deck_status_saved_count">%1$s aplicado a %2$d mazo(s)</string>
+    <string name="halo_deck_status_saved_count">%1$s aplicado a %2$d mazo(s)</string>
     <string name="halo_deck_accessibility_description">%1$s, estado: %2$s</string>
     <string name="halo_scope_title">Aplicar estado a</string>
     <string name="halo_scope_only_deck">Solo este mazo</string>
@@ -73,7 +73,18 @@
     <string name="halo_filter_only_favorites">Mostrar solo favoritos</string>
     <string name="halo_filter_only_pinned">Mostrar solo mazos fijados</string>
     <string name="halo_filter_only_protected">Mostrar solo mazos protegidos</string>
-    <string name="halo_organize_continue_last">Continuar el último mazo estudiado</string>
-    <string name="halo_continue_message">¿Continuar estudiando %1$s?</string>
-    <string name="halo_continue_unavailable">No existe un mazo reciente válido para continuar</string>
+    <string name="halo_menu_color_status">● Color y estado</string>
+    <string name="halo_favorite_add">★ Añadir a favoritos</string>
+    <string name="halo_favorite_remove">★ Quitar de favoritos</string>
+    <string name="halo_pin_add">↑ Fijar mazo arriba</string>
+    <string name="halo_pin_remove">↓ Desfijar mazo</string>
+    <string name="halo_protect_add">🔒 Proteger mazo</string>
+    <string name="halo_protect_remove">🔓 Desproteger mazo</string>
+    <string name="halo_select_toggle">Seleccionar o deseleccionar mazo activo</string>
+    <string name="halo_select_add">✦ Seleccionar mazo activo</string>
+    <string name="halo_select_remove">✦ Quitar selección activa</string>
+    <string name="halo_select_added">Mazo activo seleccionado</string>
+    <string name="halo_select_removed">Selección activa eliminada</string>
+    <string name="halo_marker_selected">selección activa</string>
+    <string name="halo_menu_reset">↻ Reiniciar mazo</string>
 </resources>

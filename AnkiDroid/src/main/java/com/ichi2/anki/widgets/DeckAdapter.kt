@@ -31,8 +31,6 @@ import com.ichi2.anki.R
 import com.ichi2.anki.common.annotations.NeedsTest
 import com.ichi2.anki.databinding.ItemDeckBinding
 import com.ichi2.anki.deckpicker.DisplayDeckNode
-import com.ichi2.anki.halo.HaloDeckOrganizationSettings
-import com.ichi2.anki.halo.HaloDeckSortMode
 import com.ichi2.anki.halo.HaloDeckStatus
 import com.ichi2.anki.halo.HaloDeckStatusStore
 import com.ichi2.anki.halo.HaloDeckStatusVisuals
@@ -112,6 +110,7 @@ class DeckAdapter(
         val forceRefresh = this.hasSubdecks != hasSubDecks
         this.hasSubdecks = hasSubDecks
         haloSourceData = data
+        haloDeckStatusStore.clearSelectedDeckIfMissing(data.map { it.did }.toSet())
         submitList(applyHaloOrganization(data))
         if (forceRefresh) notifyDataSetChanged()
     }
@@ -133,7 +132,9 @@ class DeckAdapter(
     }
 
     fun refreshHaloAll() {
-        submitList(applyHaloOrganization(haloSourceData))
+        submitList(applyHaloOrganization(haloSourceData)) {
+            notifyDataSetChanged()
+        }
     }
 
     fun haloVisibleDeckIds(): List<DeckId> = currentList.map { it.did }
@@ -161,11 +162,7 @@ class DeckAdapter(
 
     private fun applyHaloOrganization(data: List<DisplayDeckNode>): List<DisplayDeckNode> {
         if (data.isEmpty()) return emptyList()
-        val settings = haloDeckStatusStore.organizationSettings()
-        val filtered =
-            parseHaloBlocks(data)
-                .mapNotNull { filterHaloBlock(it, settings) }
-        val sorted = sortHaloBlocks(filtered, settings)
+        val sorted = sortHaloBlocks(parseHaloBlocks(data))
         return buildList {
             sorted.forEach { appendHaloBlock(it) }
         }
@@ -189,98 +186,17 @@ class DeckAdapter(
         return roots
     }
 
-    private fun filterHaloBlock(
-        block: HaloDeckBlock,
-        settings: HaloDeckOrganizationSettings,
-    ): HaloDeckBlock? {
-        val status = haloDeckStatusStore.get(block.node.did)
-        if (settings.hideLearned && status == HaloDeckStatus.LEARNED) return null
-        if (settings.hidePaused && status == HaloDeckStatus.PAUSED) return null
-
-        val visibleChildren =
-            block.children
-                .mapNotNull { filterHaloBlock(it, settings) }
-                .toMutableList()
-        val matchesStatus = settings.statusFilter == null || settings.statusFilter == status
-        val matchesSpecialFilters =
-            (!settings.onlyFavorites || haloDeckStatusStore.isFavorite(block.node.did)) &&
-                (!settings.onlyPinned || haloDeckStatusStore.isPinned(block.node.did)) &&
-                (!settings.onlyProtected || haloDeckStatusStore.isProtected(block.node.did))
-        if ((!matchesStatus || !matchesSpecialFilters) && visibleChildren.isEmpty()) return null
-        return block.copy(children = visibleChildren)
-    }
-
-    private fun sortHaloBlocks(
-        blocks: List<HaloDeckBlock>,
-        settings: HaloDeckOrganizationSettings,
-    ): List<HaloDeckBlock> {
+    private fun sortHaloBlocks(blocks: List<HaloDeckBlock>): List<HaloDeckBlock> {
         val withSortedChildren =
             blocks.map { block ->
-                block.copy(
-                    children =
-                        sortHaloBlocks(block.children, settings)
-                            .toMutableList(),
-                )
+                block.copy(children = sortHaloBlocks(block.children).toMutableList())
             }
         return withSortedChildren.sortedWith(
-            Comparator { first, second ->
-                compareHaloBlocks(first, second, settings)
-            },
+            compareByDescending<HaloDeckBlock> { haloDeckStatusStore.isPinned(it.node.did) }
+                .thenByDescending { haloDeckStatusStore.isFavorite(it.node.did) }
+                .thenBy { it.originalOrder },
         )
     }
-
-    private fun compareHaloBlocks(
-        first: HaloDeckBlock,
-        second: HaloDeckBlock,
-        settings: HaloDeckOrganizationSettings,
-    ): Int {
-        val firstPinned = haloDeckStatusStore.isPinned(first.node.did)
-        val secondPinned = haloDeckStatusStore.isPinned(second.node.did)
-        if (firstPinned != secondPinned) {
-            return if (firstPinned) -1 else 1
-        }
-
-        if (settings.favoritesFirst) {
-            val firstFavorite = haloDeckStatusStore.isFavorite(first.node.did)
-            val secondFavorite = haloDeckStatusStore.isFavorite(second.node.did)
-            if (firstFavorite != secondFavorite) {
-                return if (firstFavorite) -1 else 1
-            }
-        }
-
-        val result =
-            when (settings.sortMode) {
-                HaloDeckSortMode.ORIGINAL ->
-                    first.originalOrder.compareTo(second.originalOrder)
-                HaloDeckSortMode.NAME ->
-                    first.node.lastDeckNameComponent.compareTo(
-                        second.node.lastDeckNameComponent,
-                        ignoreCase = true,
-                    )
-                HaloDeckSortMode.PRIORITY ->
-                    haloDeckStatusStore
-                        .get(second.node.did)
-                        .priority
-                        .compareTo(haloDeckStatusStore.get(first.node.did).priority)
-                HaloDeckSortMode.PENDING ->
-                    pendingCount(second.node).compareTo(pendingCount(first.node))
-            }
-        if (result != 0) return result
-
-        val nameResult =
-            first.node.lastDeckNameComponent.compareTo(
-                second.node.lastDeckNameComponent,
-                ignoreCase = true,
-            )
-        return if (nameResult != 0) {
-            nameResult
-        } else {
-            first.originalOrder.compareTo(second.originalOrder)
-        }
-    }
-
-    private fun pendingCount(node: DisplayDeckNode): Int =
-        node.newCount + node.lrnCount + node.revCount
 
     private fun MutableList<DisplayDeckNode>.appendHaloBlock(block: HaloDeckBlock) {
         add(block.node)
@@ -344,7 +260,7 @@ class DeckAdapter(
             favorite = haloDeckStatusStore.isFavorite(node.did),
             pinned = haloDeckStatusStore.isPinned(node.did),
             isProtected = haloDeckStatusStore.isProtected(node.did),
-            selected = node.isSelected,
+            selected = haloDeckStatusStore.isSelected(node.did),
             defaultTextColor = deckTextColor,
             settings = haloDeckStatusStore.visualSettings(),
         )
@@ -375,6 +291,11 @@ class DeckAdapter(
                 false
             }
         }
+    }
+
+    override fun onViewRecycled(holder: ViewHolder) {
+        HaloDeckStatusVisuals.clear(holder.binding.deckLayout)
+        super.onViewRecycled(holder)
     }
 
     private fun setDeckExpander(

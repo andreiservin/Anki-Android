@@ -16,6 +16,7 @@
 
 package com.ichi2.anki.halo
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Canvas
@@ -25,6 +26,7 @@ import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.graphics.drawable.Animatable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.RippleDrawable
 import android.text.Spannable
@@ -33,6 +35,7 @@ import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.text.style.StyleSpan
 import android.view.View
+import android.view.animation.LinearInterpolator
 import android.widget.TextView
 import androidx.annotation.ColorInt
 import androidx.annotation.StringRes
@@ -101,13 +104,9 @@ data class HaloDeckCleanupResult(
     val favoritesRemoved: Int,
     val pinnedRemoved: Int,
     val protectedRemoved: Int,
-    val lastDeckReferencesRemoved: Int,
+    val selectedDeckReferencesRemoved: Int,
 )
 
-data class HaloLastStudiedDeck(
-    val deckId: DeckId,
-    val deckName: String,
-)
 
 class HaloDeckStatusStore(context: Context) {
     private val appContext = context.applicationContext
@@ -115,6 +114,7 @@ class HaloDeckStatusStore(context: Context) {
 
     init {
         migrateLegacyStatuses()
+        clearRemovedFinalFeatures()
     }
 
     fun get(deckId: DeckId): HaloDeckStatus =
@@ -143,31 +143,33 @@ class HaloDeckStatusStore(context: Context) {
             key.startsWith(PROTECTED_PREFIX) && value == true
         }
 
-    fun rememberLastStudiedDeck(
-        deckId: DeckId,
-        deckName: String,
-    ) {
-        preferences.edit()
-            .putLong(LAST_DECK_ID_KEY, deckId)
-            .putString(LAST_DECK_NAME_KEY, deckName)
-            .commit()
+    fun selectedDeckId(): DeckId? =
+        preferences
+            .takeIf { it.contains(SELECTED_DECK_ID_KEY) }
+            ?.getLong(SELECTED_DECK_ID_KEY, 0L)
+            ?.takeIf { it > 0L }
+
+    fun isSelected(deckId: DeckId): Boolean = selectedDeckId() == deckId
+
+    fun toggleSelected(deckId: DeckId): Boolean {
+        val selected = !isSelected(deckId)
+        val editor = preferences.edit()
+        if (selected) {
+            editor.putLong(SELECTED_DECK_ID_KEY, deckId)
+        } else {
+            editor.remove(SELECTED_DECK_ID_KEY)
+        }
+        editor.commit()
+        return selected
     }
 
-    fun lastStudiedDeck(): HaloLastStudiedDeck? {
-        if (!preferences.contains(LAST_DECK_ID_KEY)) return null
-        val deckId = preferences.getLong(LAST_DECK_ID_KEY, 0L)
-        if (deckId <= 0L) return null
-        return HaloLastStudiedDeck(
-            deckId = deckId,
-            deckName = preferences.getString(LAST_DECK_NAME_KEY, null).orEmpty(),
-        )
+    fun clearSelectedDeck() {
+        preferences.edit().remove(SELECTED_DECK_ID_KEY).commit()
     }
 
-    fun clearLastStudiedDeck() {
-        preferences.edit()
-            .remove(LAST_DECK_ID_KEY)
-            .remove(LAST_DECK_NAME_KEY)
-            .commit()
+    fun clearSelectedDeckIfMissing(validDeckIds: Set<DeckId>) {
+        val selected = selectedDeckId() ?: return
+        if (selected !in validDeckIds) clearSelectedDeck()
     }
 
     fun organizationSettings(): HaloDeckOrganizationSettings =
@@ -237,16 +239,15 @@ class HaloDeckStatusStore(context: Context) {
         val favoriteKeys = orphanKeys(FAVORITE_PREFIX)
         val pinnedKeys = orphanKeys(PINNED_PREFIX)
         val protectedKeys = orphanKeys(PROTECTED_PREFIX)
-        val lastDeckId = preferences.getLong(LAST_DECK_ID_KEY, 0L)
-        val clearLastDeck = lastDeckId > 0L && lastDeckId.toString() !in validIds
+        val selectedDeckId = preferences.getLong(SELECTED_DECK_ID_KEY, 0L)
+        val clearSelectedDeck = selectedDeckId > 0L && selectedDeckId.toString() !in validIds
         val editor = preferences.edit()
         statusKeys.forEach(editor::remove)
         favoriteKeys.forEach(editor::remove)
         pinnedKeys.forEach(editor::remove)
         protectedKeys.forEach(editor::remove)
-        if (clearLastDeck) {
-            editor.remove(LAST_DECK_ID_KEY)
-            editor.remove(LAST_DECK_NAME_KEY)
+        if (clearSelectedDeck) {
+            editor.remove(SELECTED_DECK_ID_KEY)
         }
         editor.apply()
         return HaloDeckCleanupResult(
@@ -254,7 +255,7 @@ class HaloDeckStatusStore(context: Context) {
             favoritesRemoved = favoriteKeys.size,
             pinnedRemoved = pinnedKeys.size,
             protectedRemoved = protectedKeys.size,
-            lastDeckReferencesRemoved = if (clearLastDeck) 1 else 0,
+            selectedDeckReferencesRemoved = if (clearSelectedDeck) 1 else 0,
         )
     }
 
@@ -318,32 +319,14 @@ class HaloDeckStatusStore(context: Context) {
             put("showTint", settings.showTint)
             put("tintAlpha", settings.tintAlpha)
         }
-        val organization = JSONObject().apply {
-            val settings = organizationSettings()
-            put("statusFilter", settings.statusFilter?.storageKey ?: "")
-            put("sortMode", settings.sortMode.storageKey)
-            put("hideLearned", settings.hideLearned)
-            put("hidePaused", settings.hidePaused)
-            put("favoritesFirst", settings.favoritesFirst)
-            put("onlyFavorites", settings.onlyFavorites)
-            put("onlyPinned", settings.onlyPinned)
-            put("onlyProtected", settings.onlyProtected)
-        }
-        val lastDeck = JSONObject().apply {
-            lastStudiedDeck()?.let { deck ->
-                put("id", deck.deckId)
-                put("name", deck.deckName)
-            }
-        }
         return JSONObject().apply {
-            put("format", "halo-deck-status-v4")
+            put("format", "halo-deck-status-v5")
             put("decks", decks)
             put("favorites", favorites)
             put("pinned", pinned)
             put("protected", protectedDecks)
+            put("selectedDeckId", selectedDeckId() ?: 0L)
             put("visual", visual)
-            put("organization", organization)
-            put("lastStudiedDeck", lastDeck)
         }.toString(2)
     }
 
@@ -378,56 +361,13 @@ class HaloDeckStatusStore(context: Context) {
                 visual.optInt("tintAlpha", DEFAULT_TINT_ALPHA).coerceIn(0, 72),
             )
         }
-        root.optJSONObject("organization")?.let { organization ->
-            val statusFilter =
-                HaloDeckStatus.fromStorageKeyOrNull(
-                    organization.optString("statusFilter", ""),
-                )
-            if (statusFilter == null) {
-                editor.remove(FILTER_STATUS_KEY)
-            } else {
-                editor.putString(FILTER_STATUS_KEY, statusFilter.storageKey)
-            }
-            editor.putString(
-                SORT_MODE_KEY,
-                HaloDeckSortMode
-                    .fromStorageKey(organization.optString("sortMode", ""))
-                    .storageKey,
-            )
-            editor.putBoolean(
-                HIDE_LEARNED_KEY,
-                organization.optBoolean("hideLearned", false),
-            )
-            editor.putBoolean(
-                HIDE_PAUSED_KEY,
-                organization.optBoolean("hidePaused", false),
-            )
-            editor.putBoolean(
-                FAVORITES_FIRST_KEY,
-                organization.optBoolean("favoritesFirst", true),
-            )
-            editor.putBoolean(
-                ONLY_FAVORITES_KEY,
-                organization.optBoolean("onlyFavorites", false),
-            )
-            editor.putBoolean(
-                ONLY_PINNED_KEY,
-                organization.optBoolean("onlyPinned", false),
-            )
-            editor.putBoolean(
-                ONLY_PROTECTED_KEY,
-                organization.optBoolean("onlyProtected", false),
-            )
-        }
-        val lastDeck = root.optJSONObject("lastStudiedDeck")
-        val lastDeckId = lastDeck?.optLong("id", 0L) ?: 0L
-        if (lastDeckId > 0L) {
-            editor.putLong(LAST_DECK_ID_KEY, lastDeckId)
-            editor.putString(LAST_DECK_NAME_KEY, lastDeck?.optString("name", "").orEmpty())
+        val selectedDeckId = root.optLong("selectedDeckId", 0L)
+        if (selectedDeckId > 0L) {
+            editor.putLong(SELECTED_DECK_ID_KEY, selectedDeckId)
         } else {
-            editor.remove(LAST_DECK_ID_KEY)
-            editor.remove(LAST_DECK_NAME_KEY)
+            editor.remove(SELECTED_DECK_ID_KEY)
         }
+        REMOVED_FINAL_KEYS.forEach(editor::remove)
         editor.apply()
         return count
     }
@@ -464,6 +404,12 @@ class HaloDeckStatusStore(context: Context) {
 
     fun setTintAlpha(alpha: Int) {
         preferences.edit().putInt(TINT_ALPHA_KEY, alpha.coerceIn(0, 72)).apply()
+    }
+
+    private fun clearRemovedFinalFeatures() {
+        val editor = preferences.edit()
+        REMOVED_FINAL_KEYS.forEach(editor::remove)
+        editor.apply()
     }
 
     private fun migrateLegacyStatuses() {
@@ -515,8 +461,20 @@ class HaloDeckStatusStore(context: Context) {
         private const val FAVORITE_PREFIX = "favorite_"
         private const val PINNED_PREFIX = "pinned_"
         private const val PROTECTED_PREFIX = "protected_"
-        private const val LAST_DECK_ID_KEY = "last_studied_deck_id"
-        private const val LAST_DECK_NAME_KEY = "last_studied_deck_name"
+        private const val SELECTED_DECK_ID_KEY = "selected_deck_id"
+        private val REMOVED_FINAL_KEYS =
+            listOf(
+                "last_studied_deck_id",
+                "last_studied_deck_name",
+                FILTER_STATUS_KEY,
+                SORT_MODE_KEY,
+                HIDE_LEARNED_KEY,
+                HIDE_PAUSED_KEY,
+                FAVORITES_FIRST_KEY,
+                ONLY_FAVORITES_KEY,
+                ONLY_PINNED_KEY,
+                ONLY_PROTECTED_KEY,
+            )
         private const val UNDO_KEY = "last_undo"
         private const val MISSING_VALUE = "__HALO_MISSING__"
         private const val SHOW_TEXT_KEY = "visual_show_text"
@@ -540,19 +498,45 @@ private class HaloDeckRowDrawable(
     private val selected: Boolean,
     private val density: Float,
     private val fillAlpha: Int,
-) : Drawable() {
+) : Drawable(), Animatable {
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val stripePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private var drawableAlpha: Int = 255
+    private var pulseFraction: Float = 0f
+    private val pulseAnimator =
+        ValueAnimator.ofFloat(0f, 1f, 0f).apply {
+            duration = 1_200L
+            repeatCount = ValueAnimator.INFINITE
+            repeatMode = ValueAnimator.RESTART
+            interpolator = LinearInterpolator()
+            addUpdateListener { animator ->
+                pulseFraction = animator.animatedValue as Float
+                invalidateSelf()
+            }
+        }
 
     override fun draw(canvas: Canvas) {
         val area = RectF(bounds)
         val radius = 8f * density
-        val borderWidth = if (selected) 2f * density else 1f * density
+        val borderWidth =
+            if (selected) {
+                (1.4f + pulseFraction) * density
+            } else {
+                1f * density
+            }
         val stripeWidth = 4f * density
-        fillPaint.color = ColorUtils.setAlphaComponent(accentColor, if (selected) (fillAlpha + 16).coerceAtMost(88) else fillAlpha)
-        borderPaint.color = ColorUtils.setAlphaComponent(accentColor, if (selected) 180 else 90)
+        val selectedFillBoost = if (selected) 10 else 0
+        fillPaint.color =
+            ColorUtils.setAlphaComponent(
+                accentColor,
+                (fillAlpha + selectedFillBoost).coerceAtMost(88),
+            )
+        borderPaint.color =
+            ColorUtils.setAlphaComponent(
+                if (selected) HALO_SELECTION_CYAN else accentColor,
+                if (selected) (105 + 125 * pulseFraction).toInt() else 90,
+            )
         borderPaint.strokeWidth = borderWidth
         stripePaint.color = ColorUtils.setAlphaComponent(accentColor, 235)
         fillPaint.alpha = fillPaint.alpha * drawableAlpha / 255
@@ -560,7 +544,17 @@ private class HaloDeckRowDrawable(
         stripePaint.alpha = stripePaint.alpha * drawableAlpha / 255
         canvas.drawRoundRect(area, radius, radius, fillPaint)
         val inset = borderWidth / 2f
-        canvas.drawRoundRect(RectF(area.left + inset, area.top + inset, area.right - inset, area.bottom - inset), radius, radius, borderPaint)
+        canvas.drawRoundRect(
+            RectF(
+                area.left + inset,
+                area.top + inset,
+                area.right - inset,
+                area.bottom - inset,
+            ),
+            radius,
+            radius,
+            borderPaint,
+        )
         val stripe =
             if (layoutDirection == View.LAYOUT_DIRECTION_RTL) {
                 RectF(area.right - stripeWidth, area.top, area.right, area.bottom)
@@ -568,6 +562,29 @@ private class HaloDeckRowDrawable(
                 RectF(area.left, area.top, area.left + stripeWidth, area.bottom)
             }
         canvas.drawRoundRect(stripe, radius / 2f, radius / 2f, stripePaint)
+    }
+
+    override fun start() {
+        if (selected && !pulseAnimator.isStarted) pulseAnimator.start()
+    }
+
+    override fun stop() {
+        if (pulseAnimator.isStarted) pulseAnimator.cancel()
+        pulseFraction = 0f
+        invalidateSelf()
+    }
+
+    override fun isRunning(): Boolean = pulseAnimator.isRunning
+
+    override fun setVisible(
+        visible: Boolean,
+        restart: Boolean,
+    ): Boolean {
+        val changed = super.setVisible(visible, restart)
+        if (selected) {
+            if (visible) start() else stop()
+        }
+        return changed
     }
 
     override fun setAlpha(alpha: Int) {
@@ -584,6 +601,11 @@ private class HaloDeckRowDrawable(
 
     @Deprecated("Deprecated in Android")
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+
+    companion object {
+        @ColorInt
+        private val HALO_SELECTION_CYAN = Color.rgb(0, 229, 255)
+    }
 }
 
 
@@ -728,6 +750,7 @@ object HaloDeckStatusVisuals {
         @ColorInt defaultTextColor: Int,
         settings: HaloDeckVisualSettings,
     ) {
+        clear(deckRow)
         val density = context.resources.displayMetrics.density
         val statusLabel = context.getString(status.labelRes)
         val statusTextColor = if (status == HaloDeckStatus.NORMAL) defaultTextColor else status.accentColor
@@ -786,12 +809,15 @@ object HaloDeckStatusVisuals {
         val fillAlpha = if (settings.showTint) settings.tintAlpha else 0
         val content = HaloDeckRowDrawable(status.accentColor, selected, density, fillAlpha)
         val ripple = ColorStateList.valueOf(ColorUtils.setAlphaComponent(status.accentColor, 52))
+        deckRow.setTag(R.id.halo_deck_pulse_drawable_tag, content)
         deckRow.background = RippleDrawable(ripple, content, null)
+        if (selected) content.start()
         val markerLabels =
             buildList {
                 if (favorite) add(context.getString(R.string.halo_marker_favorite))
                 if (pinned) add(context.getString(R.string.halo_marker_pinned))
                 if (isProtected) add(context.getString(R.string.halo_marker_protected))
+                if (selected) add(context.getString(R.string.halo_marker_selected))
             }.joinToString(", ")
         deckRow.contentDescription =
             if (markerLabels.isEmpty()) {
@@ -808,5 +834,10 @@ object HaloDeckStatusVisuals {
                     markerLabels,
                 )
             }
+    }
+
+    fun clear(deckRow: View) {
+        (deckRow.getTag(R.id.halo_deck_pulse_drawable_tag) as? HaloDeckRowDrawable)?.stop()
+        deckRow.setTag(R.id.halo_deck_pulse_drawable_tag, null)
     }
 }

@@ -38,7 +38,7 @@ class DeckPickerMenuContentProvider(
     override fun populateMenu(menu: Menu) {
         val options = createOptionsList()
         options.forEachIndexed { index, option ->
-            menu.add(0, index, index, option.optionName)
+            menu.add(0, index, index, option.label(deckPicker, id))
         }
     }
 
@@ -105,10 +105,10 @@ class DeckPickerMenuContentProvider(
                 }
                 add(DeckPickerContextMenu.DeckPickerContextMenuOption.DECK_OPTIONS)
                 add(DeckPickerContextMenu.DeckPickerContextMenuOption.COLOR_AND_STATUS)
-                add(DeckPickerContextMenu.DeckPickerContextMenuOption.HALO_ORGANIZE)
                 add(DeckPickerContextMenu.DeckPickerContextMenuOption.HALO_FAVORITE)
                 add(DeckPickerContextMenu.DeckPickerContextMenuOption.HALO_PIN)
                 add(DeckPickerContextMenu.DeckPickerContextMenuOption.HALO_PROTECT)
+                add(DeckPickerContextMenu.DeckPickerContextMenuOption.HALO_SELECT)
                 if (!isDynamic) {
                     add(DeckPickerContextMenu.DeckPickerContextMenuOption.HALO_RESET_DECK)
                     add(DeckPickerContextMenu.DeckPickerContextMenuOption.CUSTOM_STUDY)
