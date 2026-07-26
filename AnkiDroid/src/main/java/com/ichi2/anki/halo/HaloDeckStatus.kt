@@ -145,7 +145,7 @@ class HaloDeckStatusStore(context: Context) {
         currentKeys.forEach(editor::remove)
         var count = 0
         decks.keys().forEach { id ->
-            val status = HaloDeckStatus.fromStorageKey(decks.optString(id, null))
+            val status = HaloDeckStatus.fromStorageKey(decks.optString(id, ""))
             editor.putString("$DECK_PREFIX$id", status.storageKey)
             count++
         }
