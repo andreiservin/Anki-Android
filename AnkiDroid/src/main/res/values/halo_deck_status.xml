@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="halo_deck_color_and_status">Color and status</string>
+    <string name="halo_deck_status_normal">Normal</string>
+    <string name="halo_deck_status_urgent">Urgent</string>
+    <string name="halo_deck_status_pending">Pending</string>
+    <string name="halo_deck_status_in_progress">In progress</string>
+    <string name="halo_deck_status_learned">Learned</string>
+    <string name="halo_deck_status_special_review">Special review</string>
+    <string name="halo_deck_status_paused">Paused</string>
+    <string name="halo_deck_status_saved">Deck status: %1$s</string>
+    <string name="halo_deck_accessibility_description">%1$s, status: %2$s</string>
+</resources>

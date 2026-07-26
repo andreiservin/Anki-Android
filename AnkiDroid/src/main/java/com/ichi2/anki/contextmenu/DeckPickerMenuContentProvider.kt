@@ -104,6 +104,7 @@ class DeckPickerMenuContentProvider(
                     add(DeckPickerContextMenu.DeckPickerContextMenuOption.CREATE_SUBDECK)
                 }
                 add(DeckPickerContextMenu.DeckPickerContextMenuOption.DECK_OPTIONS)
+                add(DeckPickerContextMenu.DeckPickerContextMenuOption.COLOR_AND_STATUS)
                 if (!isDynamic) {
                     add(DeckPickerContextMenu.DeckPickerContextMenuOption.CUSTOM_STUDY)
                 }

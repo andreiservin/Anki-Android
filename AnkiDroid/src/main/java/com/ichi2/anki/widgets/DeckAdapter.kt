@@ -31,6 +31,8 @@ import com.ichi2.anki.R
 import com.ichi2.anki.common.annotations.NeedsTest
 import com.ichi2.anki.databinding.ItemDeckBinding
 import com.ichi2.anki.deckpicker.DisplayDeckNode
+import com.ichi2.anki.halo.HaloDeckStatusStore
+import com.ichi2.anki.halo.HaloDeckStatusVisuals
 import com.ichi2.anki.libanki.DeckId
 import kotlinx.coroutines.runBlocking
 import net.ankiweb.rsdroid.RustCleanup
@@ -56,6 +58,7 @@ class DeckAdapter(
     private val onDeckRightClick: (DeckId, Float, Float) -> Unit,
 ) : ListAdapter<DisplayDeckNode, DeckAdapter.ViewHolder>(deckNodeDiffCallback) {
     private val layoutInflater = LayoutInflater.from(context)
+    private val haloDeckStatusStore = HaloDeckStatusStore(context)
     private val zeroCountColor: Int
     private val newCountColor: Int
     private val learnCountColor: Int
@@ -118,6 +121,15 @@ class DeckAdapter(
         )
     }
 
+    fun refreshHaloDeckStatus(deckId: DeckId) {
+        val position = currentList.indexOfFirst { it.did == deckId }
+        if (position >= 0) {
+            notifyItemChanged(position)
+        } else {
+            notifyDataSetChanged()
+        }
+    }
+
     override fun onCreateViewHolder(
         parent: ViewGroup,
         viewType: Int,
@@ -163,9 +175,18 @@ class DeckAdapter(
         } else {
             holder.binding.deckLayout.setBackgroundResource(selectableItemBackground)
         }
-        // Set deck name and colour. Filtered decks have their own colour
-        binding.deckName.text = node.lastDeckNameComponent
-        binding.deckName.setTextColor(if (node.filtered) deckNameDynColor else deckNameDefaultColor)
+        // Set deck name and colour. Filtered decks have their own colour.
+        val deckTextColor = if (node.filtered) deckNameDynColor else deckNameDefaultColor
+        binding.deckName.setTextColor(deckTextColor)
+        HaloDeckStatusVisuals.apply(
+            context = binding.root.context,
+            deckRow = binding.deckLayout,
+            deckNameView = binding.deckName,
+            deckName = node.lastDeckNameComponent,
+            status = haloDeckStatusStore.get(node.did),
+            selected = node.isSelected,
+            defaultTextColor = deckTextColor,
+        )
 
         // Set the card counts and their colors
         binding.deckNew.text = node.newCount.toString()

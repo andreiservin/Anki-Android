@@ -139,6 +139,8 @@ import com.ichi2.anki.dialogs.customstudy.CustomStudyDialog.CustomStudyAction.Co
 import com.ichi2.anki.dialogs.setDeckPickerContextMenuResultListener
 import com.ichi2.anki.export.ExportDialogFragment
 import com.ichi2.anki.filtered.FilteredDeckOptionsFragment
+import com.ichi2.anki.halo.HaloDeckStatus
+import com.ichi2.anki.halo.HaloDeckStatusStore
 import com.ichi2.anki.introduction.CollectionPermissionScreenLauncher
 import com.ichi2.anki.introduction.hasCollectionStoragePermissions
 import com.ichi2.anki.libanki.DeckId
@@ -266,6 +268,7 @@ open class DeckPicker :
 
     private lateinit var decksLayoutManager: LinearLayoutManager
     private lateinit var deckListAdapter: DeckAdapter
+    private val haloDeckStatusStore by lazy { HaloDeckStatusStore(this) }
     private lateinit var pullToSyncWrapper: SwipeRefreshLayout
 
     private lateinit var floatingActionMenu: DeckPickerFloatingActionMenu
@@ -846,6 +849,10 @@ open class DeckPicker :
                 viewModel.openDeckOptions(deckId)
                 dismissAllDialogFragments()
             }
+            DeckPickerContextMenuOption.COLOR_AND_STATUS -> {
+                Timber.i("ContextMenu: HALO color and status selected for deck %d", deckId)
+                showHaloDeckStatusDialog(deckId)
+            }
             DeckPickerContextMenuOption.CUSTOM_STUDY -> {
                 Timber.i("ContextMenu: Custom study option selected")
                 showDialogFragment(CustomStudyDialog.createInstance(deckId))
@@ -903,6 +910,24 @@ open class DeckPicker :
                 dismissAllDialogFragments()
             }
         }
+    }
+
+    private fun showHaloDeckStatusDialog(deckId: DeckId) {
+        val statuses = HaloDeckStatus.values()
+        val currentStatus = haloDeckStatusStore.get(deckId)
+        val labels = statuses.map { getString(it.labelRes) }.toTypedArray()
+
+        AlertDialog
+            .Builder(this)
+            .setTitle(R.string.halo_deck_color_and_status)
+            .setSingleChoiceItems(labels, currentStatus.ordinal) { dialog, selectedIndex ->
+                val selectedStatus = statuses[selectedIndex]
+                haloDeckStatusStore.set(deckId, selectedStatus)
+                deckListAdapter.refreshHaloDeckStatus(deckId)
+                postSnackbar(getString(R.string.halo_deck_status_saved, getString(selectedStatus.labelRes)), Snackbar.LENGTH_SHORT)
+                dialog.dismiss()
+            }.setNegativeButton(R.string.dialog_cancel, null)
+            .show()
     }
 
     /**
