@@ -201,8 +201,12 @@ class DeckAdapter(
             block.children
                 .mapNotNull { filterHaloBlock(it, settings) }
                 .toMutableList()
-        val matchesFilter = settings.statusFilter == null || settings.statusFilter == status
-        if (!matchesFilter && visibleChildren.isEmpty()) return null
+        val matchesStatus = settings.statusFilter == null || settings.statusFilter == status
+        val matchesSpecialFilters =
+            (!settings.onlyFavorites || haloDeckStatusStore.isFavorite(block.node.did)) &&
+                (!settings.onlyPinned || haloDeckStatusStore.isPinned(block.node.did)) &&
+                (!settings.onlyProtected || haloDeckStatusStore.isProtected(block.node.did))
+        if ((!matchesStatus || !matchesSpecialFilters) && visibleChildren.isEmpty()) return null
         return block.copy(children = visibleChildren)
     }
 
@@ -230,6 +234,12 @@ class DeckAdapter(
         second: HaloDeckBlock,
         settings: HaloDeckOrganizationSettings,
     ): Int {
+        val firstPinned = haloDeckStatusStore.isPinned(first.node.did)
+        val secondPinned = haloDeckStatusStore.isPinned(second.node.did)
+        if (firstPinned != secondPinned) {
+            return if (firstPinned) -1 else 1
+        }
+
         if (settings.favoritesFirst) {
             val firstFavorite = haloDeckStatusStore.isFavorite(first.node.did)
             val secondFavorite = haloDeckStatusStore.isFavorite(second.node.did)
@@ -331,6 +341,9 @@ class DeckAdapter(
             deckNameView = binding.deckName,
             deckName = node.lastDeckNameComponent,
             status = haloDeckStatusStore.get(node.did),
+            favorite = haloDeckStatusStore.isFavorite(node.did),
+            pinned = haloDeckStatusStore.isPinned(node.did),
+            isProtected = haloDeckStatusStore.isProtected(node.did),
             selected = node.isSelected,
             defaultTextColor = deckTextColor,
             settings = haloDeckStatusStore.visualSettings(),

@@ -107,6 +107,8 @@ class DeckPickerMenuContentProvider(
                 add(DeckPickerContextMenu.DeckPickerContextMenuOption.COLOR_AND_STATUS)
                 add(DeckPickerContextMenu.DeckPickerContextMenuOption.HALO_ORGANIZE)
                 add(DeckPickerContextMenu.DeckPickerContextMenuOption.HALO_FAVORITE)
+                add(DeckPickerContextMenu.DeckPickerContextMenuOption.HALO_PIN)
+                add(DeckPickerContextMenu.DeckPickerContextMenuOption.HALO_PROTECT)
                 if (!isDynamic) {
                     add(DeckPickerContextMenu.DeckPickerContextMenuOption.HALO_RESET_DECK)
                     add(DeckPickerContextMenu.DeckPickerContextMenuOption.CUSTOM_STUDY)

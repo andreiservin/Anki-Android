@@ -275,6 +275,7 @@ open class DeckPicker :
     private lateinit var decksLayoutManager: LinearLayoutManager
     private lateinit var deckListAdapter: DeckAdapter
     private val haloDeckStatusStore by lazy { HaloDeckStatusStore(this) }
+    private var haloContinuePromptShown = false
     private lateinit var pullToSyncWrapper: SwipeRefreshLayout
 
     private lateinit var floatingActionMenu: DeckPickerFloatingActionMenu
@@ -592,7 +593,12 @@ open class DeckPicker :
 
         setFragmentResultListener(StudyOptionsFragment.REQUEST_STUDY_OPTIONS_STUDY) { _, _ ->
             Timber.d("Opening study screen from DeckPicker's study options panel")
-            openReviewer()
+            launchCatchingTask {
+                val deckId = viewModel.focusedDeck ?: withCol { decks.selected() }
+                val deckName = withCol { decks.name(deckId) }
+                haloDeckStatusStore.rememberLastStudiedDeck(deckId, deckName)
+                openReviewer()
+            }
         }
 
         pullToSyncWrapper.configureView(
@@ -728,6 +734,7 @@ open class DeckPicker :
                 data = deckList.data,
                 hasSubDecks = deckList.hasSubDecks,
             )
+            maybeShowHaloContinueLastDeck()
         }
 
         fun onFocusedDeckChanged(deckId: DeckId?) {
@@ -811,6 +818,13 @@ open class DeckPicker :
 
     private val onReceiveContentListener =
         OnReceiveContentListener { _, payload ->
+            if (haloDeckStatusStore.hasProtectedDecks()) {
+                postSnackbar(
+                    getString(R.string.halo_protected_import_blocked),
+                    Snackbar.LENGTH_LONG,
+                )
+                return@OnReceiveContentListener payload
+            }
             val (uriContent, remaining) = payload.partition { item -> item.uri != null }
 
             val clip = uriContent?.clip ?: return@OnReceiveContentListener remaining
@@ -841,6 +855,7 @@ open class DeckPicker :
         when (selectedOption) {
             DeckPickerContextMenuOption.DELETE_DECK -> {
                 Timber.i("ContextMenu: Delete deck selected")
+                if (blockProtectedDeckAction(deckId, R.string.halo_protected_delete_blocked)) return
 
                 /* we can only disable the shortcut for now as it is restricted by Google https://issuetracker.google.com/issues/68949561?pli=1#comment4
                  * if fixed or given free hand to delete the shortcut with the help of API update this method and use the new one
@@ -867,6 +882,14 @@ open class DeckPicker :
                 Timber.i("ContextMenu: HALO favorite toggled for deck %d", deckId)
                 toggleHaloFavorite(deckId)
             }
+            DeckPickerContextMenuOption.HALO_PIN -> {
+                Timber.i("ContextMenu: HALO pin toggled for deck %d", deckId)
+                toggleHaloPinned(deckId)
+            }
+            DeckPickerContextMenuOption.HALO_PROTECT -> {
+                Timber.i("ContextMenu: HALO protection toggled for deck %d", deckId)
+                toggleHaloProtected(deckId)
+            }
             DeckPickerContextMenuOption.HALO_RESET_DECK -> {
                 Timber.i("ContextMenu: HALO reset deck selected for deck %d", deckId)
                 showHaloResetDeckScopeDialog(deckId)
@@ -881,6 +904,7 @@ open class DeckPicker :
             }
             DeckPickerContextMenuOption.RENAME_DECK -> {
                 Timber.i("ContextMenu: Rename deck selected")
+                if (blockProtectedDeckAction(deckId, R.string.halo_protected_rename_blocked)) return
                 renameDeckDialog(deckId)
                 dismissAllDialogFragments()
             }
@@ -940,6 +964,7 @@ open class DeckPicker :
     )
 
     private fun showHaloResetDeckScopeDialog(deckId: DeckId) {
+        if (blockProtectedDeckAction(deckId, R.string.halo_protected_reset_blocked)) return
         launchCatchingTask {
             val onlyDeckPlan = buildHaloDeckResetPlan(deckId, includeSubdecks = false)
             val withSubdecksPlan = buildHaloDeckResetPlan(deckId, includeSubdecks = true)
@@ -1102,8 +1127,10 @@ open class DeckPicker :
                 getString(R.string.halo_organize_bulk),
                 getString(R.string.halo_organize_undo),
                 getString(R.string.halo_organize_filter),
+                getString(R.string.halo_organize_special_filters),
                 getString(R.string.halo_organize_sort),
                 getString(R.string.halo_organize_functional_visibility),
+                getString(R.string.halo_organize_continue_last),
                 getString(R.string.halo_organize_cleanup),
                 getString(R.string.halo_organize_export),
                 getString(R.string.halo_organize_import),
@@ -1124,13 +1151,15 @@ open class DeckPicker :
                         )
                     }
                     2 -> showHaloDeckFilterDialog()
-                    3 -> showHaloDeckSortDialog()
-                    4 -> showHaloFunctionalVisibilityDialog()
-                    5 -> cleanupHaloDeckConfiguration()
-                    6 -> exportHaloDeckStatuses()
-                    7 -> importHaloDeckStatuses()
-                    8 -> showHaloVisualSettingsDialog()
-                    9 -> confirmClearHaloDeckStatuses()
+                    3 -> showHaloSpecialFiltersDialog()
+                    4 -> showHaloDeckSortDialog()
+                    5 -> showHaloFunctionalVisibilityDialog()
+                    6 -> continueHaloLastStudiedDeck(showUnavailableMessage = true)
+                    7 -> cleanupHaloDeckConfiguration()
+                    8 -> exportHaloDeckStatuses()
+                    9 -> importHaloDeckStatuses()
+                    10 -> showHaloVisualSettingsDialog()
+                    11 -> confirmClearHaloDeckStatuses()
                 }
             }.setNegativeButton(R.string.dialog_cancel, null)
             .show()
@@ -1151,6 +1180,49 @@ open class DeckPicker :
         )
     }
 
+    private fun toggleHaloPinned(deckId: DeckId) {
+        val pinned = haloDeckStatusStore.togglePinned(deckId)
+        deckListAdapter.refreshHaloAll()
+        postSnackbar(
+            getString(
+                if (pinned) R.string.halo_pin_added else R.string.halo_pin_removed,
+            ),
+            Snackbar.LENGTH_SHORT,
+        )
+    }
+
+    private fun toggleHaloProtected(deckId: DeckId) {
+        if (!haloDeckStatusStore.isProtected(deckId)) {
+            haloDeckStatusStore.toggleProtected(deckId)
+            deckListAdapter.refreshHaloAll()
+            postSnackbar(getString(R.string.halo_protect_added), Snackbar.LENGTH_SHORT)
+            return
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.halo_unprotect_title)
+            .setMessage(R.string.halo_unprotect_message)
+            .setPositiveButton(R.string.halo_unprotect_action) { _, _ ->
+                haloDeckStatusStore.toggleProtected(deckId)
+                deckListAdapter.refreshHaloAll()
+                postSnackbar(getString(R.string.halo_protect_removed), Snackbar.LENGTH_SHORT)
+            }.setNegativeButton(R.string.dialog_cancel, null)
+            .show()
+    }
+
+    private fun blockProtectedDeckAction(
+        deckId: DeckId,
+        messageRes: Int,
+    ): Boolean {
+        if (!haloDeckStatusStore.isProtected(deckId)) return false
+        AlertDialog.Builder(this)
+            .setTitle(R.string.halo_protected_title)
+            .setMessage(messageRes)
+            .setPositiveButton(R.string.dialog_ok, null)
+            .show()
+        return true
+    }
+
     private fun showHaloDeckFilterDialog() {
         val statuses = HaloDeckStatus.entries
         val current = haloDeckStatusStore.organizationSettings().statusFilter
@@ -1168,6 +1240,35 @@ open class DeckPicker :
                 )
                 deckListAdapter.refreshHaloAll()
                 dialog.dismiss()
+            }.setNegativeButton(R.string.dialog_cancel, null)
+            .show()
+    }
+
+    private fun showHaloSpecialFiltersDialog() {
+        val settings = haloDeckStatusStore.organizationSettings()
+        val labels =
+            arrayOf(
+                getString(R.string.halo_filter_only_favorites),
+                getString(R.string.halo_filter_only_pinned),
+                getString(R.string.halo_filter_only_protected),
+            )
+        val selected =
+            booleanArrayOf(
+                settings.onlyFavorites,
+                settings.onlyPinned,
+                settings.onlyProtected,
+            )
+        AlertDialog.Builder(this)
+            .setTitle(R.string.halo_organize_special_filters)
+            .setMultiChoiceItems(labels, selected) { _, index, checked ->
+                selected[index] = checked
+            }.setPositiveButton(R.string.dialog_ok) { _, _ ->
+                haloDeckStatusStore.setSpecialFilters(
+                    onlyFavorites = selected[0],
+                    onlyPinned = selected[1],
+                    onlyProtected = selected[2],
+                )
+                deckListAdapter.refreshHaloAll()
             }.setNegativeButton(R.string.dialog_cancel, null)
             .show()
     }
@@ -1239,6 +1340,9 @@ open class DeckPicker :
                     R.string.halo_cleanup_result,
                     result.statusesRemoved,
                     result.favoritesRemoved,
+                    result.pinnedRemoved,
+                    result.protectedRemoved,
+                    result.lastDeckReferencesRemoved,
                 ),
                 Snackbar.LENGTH_SHORT,
             )
@@ -1642,7 +1746,7 @@ open class DeckPicker :
             }
             R.id.action_import -> {
                 Timber.i("DeckPicker:: Import button pressed")
-                showImportDialog()
+                showHaloImportDialogIfAllowed()
                 return true
             }
             R.id.action_check_database -> {
@@ -1676,15 +1780,16 @@ open class DeckPicker :
             R.id.action_deck_rename -> {
                 launchCatchingTask {
                     val targetDeckId = withCol { decks.selected() }
-                    renameDeckDialog(targetDeckId)
+                    if (!blockProtectedDeckAction(targetDeckId, R.string.halo_protected_rename_blocked)) {
+                        renameDeckDialog(targetDeckId)
+                    }
                 }
                 return true
             }
             R.id.action_deck_delete -> {
                 launchCatchingTask {
-                    withProgress(resources.getString(R.string.delete_deck)) {
-                        viewModel.deleteSelectedDeck().join()
-                    }
+                    val targetDeckId = withCol { decks.selected() }
+                    deleteDeck(targetDeckId).join()
                 }
                 return true
             }
@@ -1981,7 +2086,7 @@ open class DeckPicker :
                 if (event.isCtrlPressed && event.isShiftPressed) {
                     // Shortcut: CTRL + Shift + I
                     Timber.i("Show import dialog from keypress")
-                    showImportDialog()
+                    showHaloImportDialogIfAllowed()
                     return true
                 }
             }
@@ -2008,6 +2113,10 @@ open class DeckPicker :
                     Timber.w("no focused deck")
                     return@launchCatchingTask
                 }
+
+            if (blockProtectedDeckAction(focusedDeck, R.string.halo_protected_delete_blocked)) {
+                return@launchCatchingTask
+            }
 
             val (deckName, totalCards, isFilteredDeck) =
                 withCol {
@@ -2117,6 +2226,60 @@ open class DeckPicker :
             Timber.i("No startup screens required")
             onFinishedStartup()
         }
+    }
+
+    private fun maybeShowHaloContinueLastDeck() {
+        if (haloContinuePromptShown) return
+        haloContinuePromptShown = true
+        val lastDeck = haloDeckStatusStore.lastStudiedDeck() ?: return
+        launchCatchingTask {
+            val currentName =
+                withCol {
+                    decks
+                        .allNamesAndIds(
+                            includeFiltered = true,
+                            skipEmptyDefault = false,
+                        ).firstOrNull { it.id == lastDeck.deckId }
+                        ?.name
+                }
+            if (currentName == null) {
+                haloDeckStatusStore.clearLastStudiedDeck()
+                return@launchCatchingTask
+            }
+            haloDeckStatusStore.rememberLastStudiedDeck(lastDeck.deckId, currentName)
+            binding.rootLayout.post {
+                Snackbar.make(
+                    binding.rootLayout,
+                    getString(R.string.halo_continue_message, currentName),
+                    Snackbar.LENGTH_LONG,
+                ).setAction(R.string.halo_continue_action) {
+                    onDeckClick(lastDeck.deckId, DeckSelectionType.SKIP_STUDY_OPTIONS)
+                }.show()
+            }
+        }
+    }
+
+    private fun continueHaloLastStudiedDeck(showUnavailableMessage: Boolean) {
+        val lastDeck = haloDeckStatusStore.lastStudiedDeck()
+        if (lastDeck == null) {
+            if (showUnavailableMessage) {
+                postSnackbar(getString(R.string.halo_continue_unavailable), Snackbar.LENGTH_SHORT)
+            }
+            return
+        }
+        onDeckClick(lastDeck.deckId, DeckSelectionType.SKIP_STUDY_OPTIONS)
+    }
+
+    private fun showHaloImportDialogIfAllowed() {
+        if (!haloDeckStatusStore.hasProtectedDecks()) {
+            showImportDialog()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.halo_protected_title)
+            .setMessage(R.string.halo_protected_import_blocked)
+            .setPositiveButton(R.string.dialog_ok, null)
+            .show()
     }
 
     // #16061. We have to queue snackbar to avoid the misaligned snackbar showed from onCreate()
@@ -2330,14 +2493,22 @@ open class DeckPicker :
         reviewLauncher.launch(intent)
     }
 
-    private fun openReviewerOrStudyOptions(selectionType: DeckSelectionType) {
+    private fun openReviewerOrStudyOptions(
+        selectionType: DeckSelectionType,
+        deckId: DeckId,
+        deckName: String,
+    ) {
         when (selectionType) {
             DeckSelectionType.DEFAULT -> {
                 if (tryShowStudyOptionsPanel()) return
+                haloDeckStatusStore.rememberLastStudiedDeck(deckId, deckName)
                 openReviewer()
             }
             DeckSelectionType.SHOW_STUDY_OPTIONS -> openStudyOptions()
-            DeckSelectionType.SKIP_STUDY_OPTIONS -> openReviewer()
+            DeckSelectionType.SKIP_STUDY_OPTIONS -> {
+                haloDeckStatusStore.rememberLastStudiedDeck(deckId, deckName)
+                openReviewer()
+            }
         }
     }
 
@@ -2376,9 +2547,10 @@ open class DeckPicker :
         viewModel.focusedDeck = did
 
         // TODO: Reuse dueTree from ViewModel instead of recalculating for better performance.
+        val deckName = withCol { decks.name(did) }
         val deck = withCol { sched.deckDueTree().find(did) }
         if (deck?.hasCardsReadyToStudy() == true) {
-            openReviewerOrStudyOptions(selectionType)
+            openReviewerOrStudyOptions(selectionType, did, deckName)
             return
         }
 
@@ -2444,6 +2616,7 @@ open class DeckPicker :
     }
 
     fun renameDeckDialog(did: DeckId) {
+        if (blockProtectedDeckAction(did, R.string.halo_protected_rename_blocked)) return
         launchCatchingTask {
             val currentName = withCol { decks.name(did) }
             val createDeckDialog =
@@ -2479,6 +2652,9 @@ open class DeckPicker :
      */
     fun deleteDeck(did: DeckId) =
         launchCatchingTask {
+            if (blockProtectedDeckAction(did, R.string.halo_protected_delete_blocked)) {
+                return@launchCatchingTask
+            }
             withProgress(resources.getString(R.string.delete_deck)) {
                 viewModel.deleteDeck(did).join()
             }

@@ -27,6 +27,7 @@ import anki.collection.OpChanges
 import anki.decks.SetDeckCollapsedRequest
 import anki.i18n.GeneratedTranslations
 import anki.sync.SyncStatusResponse
+import com.ichi2.anki.AnkiDroidApp
 import com.ichi2.anki.CollectionManager
 import com.ichi2.anki.CollectionManager.TR
 import com.ichi2.anki.CollectionManager.withCol
@@ -35,9 +36,11 @@ import com.ichi2.anki.DeckPicker
 import com.ichi2.anki.InitialActivity
 import com.ichi2.anki.OnErrorListener
 import com.ichi2.anki.PermissionSet
+import com.ichi2.anki.R
 import com.ichi2.anki.browser.BrowserDestination
 import com.ichi2.anki.configureRenderingMode
 import com.ichi2.anki.launchCatchingIO
+import com.ichi2.anki.halo.HaloDeckStatusStore
 import com.ichi2.anki.libanki.CardId
 import com.ichi2.anki.libanki.Consts
 import com.ichi2.anki.libanki.Consts.DEFAULT_DECK_ID
@@ -205,6 +208,11 @@ class DeckPickerViewModel :
     @CheckResult // This is a slow operation and should be inside `withProgress`
     fun deleteDeck(did: DeckId) =
         viewModelScope.launch {
+            val appContext = AnkiDroidApp.instance
+            if (HaloDeckStatusStore(appContext).isProtected(did)) {
+                onError.emit(appContext.getString(R.string.halo_protected_delete_blocked))
+                return@launch
+            }
             val deckName = withCol { decks.getLegacy(did)!!.name }
             val changes = undoableOp { decks.remove(listOf(did)) }
             // After deletion: decks.current() reverts to Default, necessitating `focusedDeck`

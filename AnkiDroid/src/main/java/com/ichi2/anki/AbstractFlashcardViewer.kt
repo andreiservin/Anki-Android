@@ -125,6 +125,7 @@ import com.ichi2.anki.dialogs.TtsVoicesDialogFragment
 import com.ichi2.anki.dialogs.tags.TagsDialog
 import com.ichi2.anki.dialogs.tags.TagsDialogFactory
 import com.ichi2.anki.dialogs.tags.TagsDialogListener
+import com.ichi2.anki.halo.HaloDeckStatusStore
 import com.ichi2.anki.libanki.Card
 import com.ichi2.anki.libanki.CardId
 import com.ichi2.anki.libanki.Collection
@@ -1076,6 +1077,10 @@ abstract class AbstractFlashcardViewer :
                             .put("format", BACKUP_FORMAT)
                             .put("version", BACKUP_VERSION)
                             .put("settings", JSONObject(settingsStore.getSettingsJson()))
+                            .put(
+                                "deckOrganization",
+                                JSONObject(HaloDeckStatusStore(context).exportJson()),
+                            )
                         val audioJson = JSONObject()
                         VALID_SLOTS.forEach { slot ->
                             val audioInfo = JSONObject()
@@ -1136,6 +1141,9 @@ abstract class AbstractFlashcardViewer :
                 if (parsedManifest.optString("format") != BACKUP_FORMAT) return -1
                 val settings = parsedManifest.optJSONObject("settings") ?: JSONObject()
                 if (!settingsStore.saveSettingsJson(settings.toString())) return -1
+                parsedManifest.optJSONObject("deckOrganization")?.let { organization ->
+                    if (HaloDeckStatusStore(context).importJson(organization.toString()) < 0) return -1
+                }
                 val audioManifest = parsedManifest.optJSONObject("audio") ?: JSONObject()
                 var imported = 0
                 audioBytes.forEach { (slot, bytes) ->
@@ -1159,6 +1167,7 @@ abstract class AbstractFlashcardViewer :
                     .appendLine("Motor HALO: V23.5")
                     .appendLine("Almacenamiento de audio: $STORAGE_SCHEMA_VERSION")
                     .appendLine("Configuración: ${settingsStore.getSettingsJson()}")
+                    .appendLine("Organización de mazos: ${HaloDeckStatusStore(context).exportJson()}")
                     .appendLine()
                 VALID_SLOTS.forEach { slot ->
                     val file = fileFor(slot)
