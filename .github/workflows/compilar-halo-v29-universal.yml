@@ -54,6 +54,8 @@ jobs:
 
           MINIFY_ENABLED=false \
           ./gradlew :AnkiDroid:assembleFullRelease \
+            -PcustomSuffix=".halo" \
+            -PcustomName="AnkiDroid HALO" \
             -Duniversal-apk=true \
             -PbuildTime="$BUILD_TIME" \
             --no-daemon \
