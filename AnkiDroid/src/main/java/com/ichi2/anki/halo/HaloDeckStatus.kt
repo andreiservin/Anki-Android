@@ -75,6 +75,13 @@ data class HaloDeckVisualSettings(
     val tintAlpha: Int,
 )
 
+enum class HaloDeckMarkerAction {
+    PIN,
+    FAVORITE,
+    PROTECT,
+    COLOR_AND_STATUS,
+}
+
 enum class HaloDeckSortMode(val storageKey: String) {
     ORIGINAL("original"),
     NAME("name"),
@@ -137,6 +144,30 @@ class HaloDeckStatusStore(context: Context) {
 
     fun toggleProtected(deckId: DeckId): Boolean =
         toggleBooleanFlag(protectedKey(deckId), isProtected(deckId))
+
+    fun hasPersonalization(deckId: DeckId): Boolean =
+        preferences.contains(deckKey(deckId)) ||
+            preferences.getBoolean(favoriteKey(deckId), false) ||
+            preferences.getBoolean(pinnedKey(deckId), false) ||
+            preferences.getBoolean(protectedKey(deckId), false) ||
+            isSelected(deckId)
+
+    /**
+     * Removes only HALO visual/organizational metadata for one deck.
+     *
+     * Cards, notes, scheduling, progress and the deck itself are never touched.
+     */
+    fun clearPersonalization(deckId: DeckId): Boolean {
+        if (!hasPersonalization(deckId)) return false
+        val editor =
+            preferences.edit()
+                .remove(deckKey(deckId))
+                .remove(favoriteKey(deckId))
+                .remove(pinnedKey(deckId))
+                .remove(protectedKey(deckId))
+        if (isSelected(deckId)) editor.remove(SELECTED_DECK_ID_KEY)
+        return editor.commit()
+    }
 
     fun hasProtectedDecks(): Boolean =
         preferences.all.any { (key, value) ->
@@ -612,14 +643,15 @@ private class HaloDeckRowDrawable(
 private class HaloDeckMarkersDrawable(
     @ColorInt private val statusColor: Int,
     private val showStatusDot: Boolean,
+    private val favorite: Boolean,
     private val pinned: Boolean,
     private val isProtected: Boolean,
     private val density: Float,
 ) : Drawable() {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val iconSize = 10f * density
+    private val iconSize = 11f * density
     private val iconGap = 4f * density
-    private val iconCount = listOf(showStatusDot, pinned, isProtected).count { it }
+    private val iconCount = listOf(pinned, favorite, isProtected, showStatusDot).count { it }
     private var drawableAlpha = 255
 
     override fun getIntrinsicWidth(): Int =
@@ -629,7 +661,7 @@ private class HaloDeckMarkersDrawable(
             (iconCount * iconSize + (iconCount - 1) * iconGap).toInt()
         }
 
-    override fun getIntrinsicHeight(): Int = (12f * density).toInt()
+    override fun getIntrinsicHeight(): Int = (14f * density).toInt()
 
     override fun draw(canvas: Canvas) {
         if (iconCount == 0) return
@@ -640,18 +672,24 @@ private class HaloDeckMarkersDrawable(
             centerX += iconSize + iconGap
         }
 
-        if (showStatusDot) {
-            paint.style = Paint.Style.FILL
-            paint.color = withAlpha(statusColor)
-            canvas.drawCircle(centerX, centerY, 4f * density, paint)
-            advance()
-        }
+        // HALO V29 official order:
+        // [Pinned] [Favorite] [Protected] [Color/status] Deck name
         if (pinned) {
             drawPin(canvas, centerX, centerY, Color.rgb(38, 198, 218))
             advance()
         }
+        if (favorite) {
+            drawFavorite(canvas, centerX, centerY, Color.rgb(255, 193, 7))
+            advance()
+        }
         if (isProtected) {
             drawLock(canvas, centerX, centerY, Color.rgb(207, 216, 220))
+            advance()
+        }
+        if (showStatusDot) {
+            paint.style = Paint.Style.FILL
+            paint.color = withAlpha(statusColor)
+            canvas.drawCircle(centerX, centerY, 4f * density, paint)
         }
     }
 
@@ -681,6 +719,22 @@ private class HaloDeckMarkersDrawable(
             centerY + 0.4f * density,
             paint,
         )
+    }
+
+    private fun drawFavorite(
+        canvas: Canvas,
+        centerX: Float,
+        centerY: Float,
+        @ColorInt color: Int,
+    ) {
+        paint.color = withAlpha(color)
+        paint.style = Paint.Style.FILL
+        paint.textAlign = Paint.Align.CENTER
+        paint.typeface = Typeface.DEFAULT_BOLD
+        paint.textSize = 12f * density
+        val baseline = centerY - (paint.ascent() + paint.descent()) / 2f
+        canvas.drawText("★", centerX, baseline, paint)
+        paint.textAlign = Paint.Align.LEFT
     }
 
     private fun drawLock(
@@ -749,35 +803,16 @@ object HaloDeckStatusVisuals {
         selected: Boolean,
         @ColorInt defaultTextColor: Int,
         settings: HaloDeckVisualSettings,
-    ) {
+    ): List<HaloDeckMarkerAction> {
         clear(deckRow)
         val density = context.resources.displayMetrics.density
+        val hasCustomStatus = status != HaloDeckStatus.NORMAL
         val statusLabel = context.getString(status.labelRes)
-        val statusTextColor = if (status == HaloDeckStatus.NORMAL) defaultTextColor else status.accentColor
+        val statusTextColor = if (hasCustomStatus) status.accentColor else defaultTextColor
         val text = SpannableStringBuilder(deckName)
-        if (favorite) {
-            val favoriteStart = text.length
-            text.append(" ★")
-            text.setSpan(
-                ForegroundColorSpan(Color.rgb(255, 193, 7)),
-                favoriteStart,
-                text.length,
-                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
-            )
-            text.setSpan(
-                RelativeSizeSpan(0.82f),
-                favoriteStart,
-                text.length,
-                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
-            )
-            text.setSpan(
-                StyleSpan(Typeface.BOLD),
-                favoriteStart,
-                text.length,
-                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
-            )
-        }
-        if (settings.showStatusText) {
+
+        // A normal deck with no HALO status remains visually clean.
+        if (settings.showStatusText && hasCustomStatus) {
             text.append('\n')
             val start = text.length
             text.append(statusLabel)
@@ -789,14 +824,21 @@ object HaloDeckStatusVisuals {
             deckNameView.maxLines = 1
         }
         deckNameView.text = text
-        val statusDotColor =
-            if (status == HaloDeckStatus.NORMAL) defaultTextColor else status.accentColor
+
+        val markerActions =
+            buildList {
+                if (pinned) add(HaloDeckMarkerAction.PIN)
+                if (favorite) add(HaloDeckMarkerAction.FAVORITE)
+                if (isProtected) add(HaloDeckMarkerAction.PROTECT)
+                if (settings.showDot && hasCustomStatus) add(HaloDeckMarkerAction.COLOR_AND_STATUS)
+            }
         val markers =
             HaloDeckMarkersDrawable(
-                statusColor = statusDotColor,
-                showStatusDot = settings.showDot,
-                pinned = pinned,
-                isProtected = isProtected,
+                statusColor = status.accentColor,
+                showStatusDot = HaloDeckMarkerAction.COLOR_AND_STATUS in markerActions,
+                favorite = HaloDeckMarkerAction.FAVORITE in markerActions,
+                pinned = HaloDeckMarkerAction.PIN in markerActions,
+                isProtected = HaloDeckMarkerAction.PROTECT in markerActions,
                 density = density,
             )
         if (markers.intrinsicWidth > 0) {
@@ -804,36 +846,46 @@ object HaloDeckStatusVisuals {
             deckNameView.compoundDrawablePadding = (7f * density).toInt()
             deckNameView.setCompoundDrawablesRelative(markers, null, null, null)
         } else {
+            deckNameView.compoundDrawablePadding = 0
             deckNameView.setCompoundDrawablesRelative(null, null, null, null)
         }
-        val fillAlpha = if (settings.showTint) settings.tintAlpha else 0
-        val content = HaloDeckRowDrawable(status.accentColor, selected, density, fillAlpha)
-        val ripple = ColorStateList.valueOf(ColorUtils.setAlphaComponent(status.accentColor, 52))
-        deckRow.setTag(R.id.halo_deck_pulse_drawable_tag, content)
-        deckRow.background = RippleDrawable(ripple, content, null)
-        if (selected) content.start()
+
+        // Preserve AnkiDroid's standard row appearance when there is no custom status.
+        // Favorite, pin and protection are represented by the left-side indicators.
+        if (hasCustomStatus || selected) {
+            val fillAlpha = if (settings.showTint && hasCustomStatus) settings.tintAlpha else 0
+            val content = HaloDeckRowDrawable(status.accentColor, selected, density, fillAlpha)
+            val ripple = ColorStateList.valueOf(ColorUtils.setAlphaComponent(status.accentColor, 52))
+            deckRow.setTag(R.id.halo_deck_pulse_drawable_tag, content)
+            deckRow.background = RippleDrawable(ripple, content, null)
+            if (selected) content.start()
+        }
+
         val markerLabels =
             buildList {
-                if (favorite) add(context.getString(R.string.halo_marker_favorite))
                 if (pinned) add(context.getString(R.string.halo_marker_pinned))
+                if (favorite) add(context.getString(R.string.halo_marker_favorite))
                 if (isProtected) add(context.getString(R.string.halo_marker_protected))
                 if (selected) add(context.getString(R.string.halo_marker_selected))
             }.joinToString(", ")
         deckRow.contentDescription =
-            if (markerLabels.isEmpty()) {
-                context.getString(
-                    R.string.halo_deck_accessibility_description,
-                    deckName,
-                    statusLabel,
-                )
-            } else {
-                context.getString(
-                    R.string.halo_deck_accessibility_description_with_markers,
-                    deckName,
-                    statusLabel,
-                    markerLabels,
-                )
+            when {
+                markerLabels.isNotEmpty() ->
+                    context.getString(
+                        R.string.halo_deck_accessibility_description_with_markers,
+                        deckName,
+                        statusLabel,
+                        markerLabels,
+                    )
+                hasCustomStatus ->
+                    context.getString(
+                        R.string.halo_deck_accessibility_description,
+                        deckName,
+                        statusLabel,
+                    )
+                else -> deckName
             }
+        return markerActions
     }
 
     fun clear(deckRow: View) {

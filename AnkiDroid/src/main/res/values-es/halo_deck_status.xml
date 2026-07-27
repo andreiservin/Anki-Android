@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="halo_management_menu">Gestión HALO del mazo ›</string>
-    <string name="halo_management_title">Gestión HALO del mazo</string>
+    <string name="halo_management_menu">⚡ Opciones HALO ›</string>
+    <string name="halo_management_title">⚡ Opciones HALO</string>
     <string name="halo_deck_color_and_status">Color y estado</string>
     <string name="halo_deck_status_normal">Normal</string>
     <string name="halo_deck_status_urgent">Urgente</string>
@@ -68,11 +68,11 @@
     <string name="halo_filter_only_favorites">Mostrar solo favoritos</string>
     <string name="halo_filter_only_pinned">Mostrar solo mazos fijados</string>
     <string name="halo_filter_only_protected">Mostrar solo mazos protegidos</string>
-    <string name="halo_menu_color_status">● Color y estado</string>
+    <string name="halo_menu_color_status">🎨 Color y estado</string>
     <string name="halo_favorite_add">★ Añadir a favoritos</string>
     <string name="halo_favorite_remove">★ Quitar de favoritos</string>
-    <string name="halo_pin_add">↑ Fijar mazo arriba</string>
-    <string name="halo_pin_remove">↓ Desfijar mazo</string>
+    <string name="halo_pin_add">📌 Fijar mazo arriba</string>
+    <string name="halo_pin_remove">📌 Desfijar mazo</string>
     <string name="halo_protect_add">🔒 Proteger mazo</string>
     <string name="halo_protect_remove">🔓 Desproteger mazo</string>
     <string name="halo_select_toggle">Seleccionar o deseleccionar mazo activo</string>
@@ -82,4 +82,10 @@
     <string name="halo_select_removed">Selección activa eliminada</string>
     <string name="halo_marker_selected">selección activa</string>
     <string name="halo_menu_reset">↻ Reiniciar mazo</string>
+    <string name="halo_clear_personalization_action">🧹 Quitar personalización HALO</string>
+    <string name="halo_clear_personalization_title">¿Quitar la personalización HALO?</string>
+    <string name="halo_clear_personalization_message">Se eliminarán los indicadores de fijado, favorito, protección, color y estado de este mazo. Las tarjetas, el contenido y el progreso de estudio no se modificarán.</string>
+    <string name="halo_clear_personalization_confirm">Quitar</string>
+    <string name="halo_clear_personalization_done">Personalización HALO eliminada</string>
+    <string name="halo_clear_personalization_empty">Este mazo no tiene personalización HALO</string>
 </resources>

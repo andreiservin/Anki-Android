@@ -141,6 +141,7 @@ import com.ichi2.anki.dialogs.customstudy.CustomStudyDialog.CustomStudyAction.Co
 import com.ichi2.anki.dialogs.setDeckPickerContextMenuResultListener
 import com.ichi2.anki.export.ExportDialogFragment
 import com.ichi2.anki.filtered.FilteredDeckOptionsFragment
+import com.ichi2.anki.halo.HaloDeckMarkerAction
 import com.ichi2.anki.halo.HaloDeckResetLog
 import com.ichi2.anki.halo.HaloDeckSortMode
 import com.ichi2.anki.halo.HaloDeckStatus
@@ -536,6 +537,14 @@ open class DeckPicker :
                 onDeckRightClick = { deckId, x, y ->
                     showDeckPickerRightClickContextMenu(deckId, x, y)
                     Timber.d("Right Click on deck recorded!! %d, %f %f", deckId, x, y)
+                },
+                onHaloMarkerSelected = { deckId, action ->
+                    when (action) {
+                        HaloDeckMarkerAction.PIN -> toggleHaloPinned(deckId)
+                        HaloDeckMarkerAction.FAVORITE -> toggleHaloFavorite(deckId)
+                        HaloDeckMarkerAction.PROTECT -> toggleHaloProtected(deckId)
+                        HaloDeckMarkerAction.COLOR_AND_STATUS -> showHaloDeckStatusDialog(deckId)
+                    }
                 },
             )
         deckPickerBinding.decks.adapter = deckListAdapter
@@ -1091,11 +1100,10 @@ open class DeckPicker :
             val isDynamic = withCol { decks.isFiltered(deckId) }
             val options =
                 buildList {
-                    add(DeckPickerContextMenuOption.COLOR_AND_STATUS)
-                    add(DeckPickerContextMenuOption.HALO_FAVORITE)
                     add(DeckPickerContextMenuOption.HALO_PIN)
+                    add(DeckPickerContextMenuOption.HALO_FAVORITE)
                     add(DeckPickerContextMenuOption.HALO_PROTECT)
-                    add(DeckPickerContextMenuOption.HALO_SELECT)
+                    add(DeckPickerContextMenuOption.COLOR_AND_STATUS)
                     if (!isDynamic) add(DeckPickerContextMenuOption.HALO_RESET_DECK)
                 }
             val labels = options.map { it.label(this@DeckPicker, deckId) }.toTypedArray()
@@ -1103,9 +1111,43 @@ open class DeckPicker :
                 .setTitle(R.string.halo_management_title)
                 .setItems(labels) { _, index ->
                     handleContextMenuSelection(options[index], deckId)
+                }.setNeutralButton(R.string.halo_clear_personalization_action) { _, _ ->
+                    showHaloClearPersonalizationConfirmation(deckId)
                 }.setNegativeButton(R.string.dialog_cancel, null)
                 .show()
         }
+    }
+
+    private fun showHaloClearPersonalizationConfirmation(deckId: DeckId) {
+        if (!haloDeckStatusStore.hasPersonalization(deckId)) {
+            postSnackbar(
+                getString(R.string.halo_clear_personalization_empty),
+                Snackbar.LENGTH_SHORT,
+            )
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.halo_clear_personalization_title)
+            .setMessage(R.string.halo_clear_personalization_message)
+            .setPositiveButton(R.string.halo_clear_personalization_confirm) { _, _ ->
+                clearHaloDeckPersonalization(deckId)
+            }.setNegativeButton(R.string.dialog_cancel, null)
+            .show()
+    }
+
+    private fun clearHaloDeckPersonalization(deckId: DeckId) {
+        val removed = haloDeckStatusStore.clearPersonalization(deckId)
+        deckListAdapter.refreshHaloAll()
+        postSnackbar(
+            getString(
+                if (removed) {
+                    R.string.halo_clear_personalization_done
+                } else {
+                    R.string.halo_clear_personalization_empty
+                },
+            ),
+            Snackbar.LENGTH_SHORT,
+        )
     }
 
     private fun showHaloDeckStatusDialog(deckId: DeckId) {

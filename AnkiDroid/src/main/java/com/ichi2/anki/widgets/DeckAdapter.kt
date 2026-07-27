@@ -19,9 +19,11 @@ package com.ichi2.anki.widgets
 import android.content.Context
 import android.graphics.drawable.Drawable
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageButton
+import android.widget.TextView
 import androidx.core.content.res.getDrawableOrThrow
 import androidx.core.content.withStyledAttributes
 import androidx.recyclerview.widget.DiffUtil
@@ -31,6 +33,7 @@ import com.ichi2.anki.R
 import com.ichi2.anki.common.annotations.NeedsTest
 import com.ichi2.anki.databinding.ItemDeckBinding
 import com.ichi2.anki.deckpicker.DisplayDeckNode
+import com.ichi2.anki.halo.HaloDeckMarkerAction
 import com.ichi2.anki.halo.HaloDeckStatus
 import com.ichi2.anki.halo.HaloDeckStatusStore
 import com.ichi2.anki.halo.HaloDeckStatusVisuals
@@ -48,6 +51,7 @@ import net.ankiweb.rsdroid.RustCleanup
  * @param onDeckContextRequested callback triggered when the user requested to see extra actions for
  * a deck. This consists in a context menu brought in by either a long touch or a right click.
  * @param onDeckRightClick callback triggered when the user right-clicks on a deck with a mouse
+ * @param onHaloMarkerSelected callback triggered when a visible HALO marker is tapped
  */
 @RustCleanup("Differs from legacy backend: Create deck 'One', create deck 'One::two'. 'One::two' was not expanded")
 class DeckAdapter(
@@ -57,6 +61,7 @@ class DeckAdapter(
     private val onDeckChildrenToggled: (DeckId) -> Unit,
     private val onDeckContextRequested: (DeckId) -> Unit,
     private val onDeckRightClick: (DeckId, Float, Float) -> Unit,
+    private val onHaloMarkerSelected: (DeckId, HaloDeckMarkerAction) -> Unit = { _, _ -> },
 ) : ListAdapter<DisplayDeckNode, DeckAdapter.ViewHolder>(deckNodeDiffCallback) {
     private val layoutInflater = LayoutInflater.from(context)
     private val haloDeckStatusStore = HaloDeckStatusStore(context)
@@ -261,19 +266,21 @@ class DeckAdapter(
         // Set deck name and colour. Filtered decks have their own colour.
         val deckTextColor = if (node.filtered) deckNameDynColor else deckNameDefaultColor
         binding.deckName.setTextColor(deckTextColor)
-        HaloDeckStatusVisuals.apply(
-            context = binding.root.context,
-            deckRow = binding.deckLayout,
-            deckNameView = binding.deckName,
-            deckName = node.lastDeckNameComponent,
-            status = haloDeckStatusStore.get(node.did),
-            favorite = haloDeckStatusStore.isFavorite(node.did),
-            pinned = haloDeckStatusStore.isPinned(node.did),
-            isProtected = haloDeckStatusStore.isProtected(node.did),
-            selected = haloDeckStatusStore.isSelected(node.did),
-            defaultTextColor = deckTextColor,
-            settings = haloDeckStatusStore.visualSettings(),
-        )
+        val haloMarkerActions =
+            HaloDeckStatusVisuals.apply(
+                context = binding.root.context,
+                deckRow = binding.deckLayout,
+                deckNameView = binding.deckName,
+                deckName = node.lastDeckNameComponent,
+                status = haloDeckStatusStore.get(node.did),
+                favorite = haloDeckStatusStore.isFavorite(node.did),
+                pinned = haloDeckStatusStore.isPinned(node.did),
+                isProtected = haloDeckStatusStore.isProtected(node.did),
+                selected = haloDeckStatusStore.isSelected(node.did),
+                defaultTextColor = deckTextColor,
+                settings = haloDeckStatusStore.visualSettings(),
+            )
+        bindHaloMarkerActions(binding.deckName, node.did, haloMarkerActions)
 
         // Set the card counts and their colors
         binding.deckNew.text = node.newCount.toString()
@@ -303,7 +310,59 @@ class DeckAdapter(
         }
     }
 
+    private fun bindHaloMarkerActions(
+        deckNameView: TextView,
+        deckId: DeckId,
+        actions: List<HaloDeckMarkerAction>,
+    ) {
+        if (actions.isEmpty()) {
+            deckNameView.setOnTouchListener(null)
+            return
+        }
+
+        deckNameView.setOnTouchListener { view, event ->
+            val textView = view as TextView
+            val startDrawable = textView.compoundDrawablesRelative[0] ?: return@setOnTouchListener false
+            val drawableWidth =
+                startDrawable.bounds.width().takeIf { it > 0 } ?: startDrawable.intrinsicWidth
+            if (drawableWidth <= 0) return@setOnTouchListener false
+
+            val isRtl = textView.layoutDirection == View.LAYOUT_DIRECTION_RTL
+            val localX =
+                if (isRtl) {
+                    textView.width - textView.paddingEnd - event.x
+                } else {
+                    event.x - textView.paddingStart
+                }
+            if (localX < 0f || localX > drawableWidth.toFloat()) {
+                return@setOnTouchListener false
+            }
+
+            val density = textView.resources.displayMetrics.density
+            val iconSize = 11f * density
+            val iconGap = 4f * density
+            val slotSize = iconSize + iconGap
+            val actionIndex = (localX / slotSize).toInt()
+            if (actionIndex !in actions.indices) return@setOnTouchListener false
+
+            val positionInsideSlot = localX - actionIndex * slotSize
+            if (positionInsideSlot > iconSize) return@setOnTouchListener false
+
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> true
+                MotionEvent.ACTION_UP -> {
+                    textView.performClick()
+                    onHaloMarkerSelected(deckId, actions[actionIndex])
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> true
+                else -> true
+            }
+        }
+    }
+
     override fun onViewRecycled(holder: ViewHolder) {
+        holder.binding.deckName.setOnTouchListener(null)
         HaloDeckStatusVisuals.clear(holder.binding.deckLayout)
         super.onViewRecycled(holder)
     }

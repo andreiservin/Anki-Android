@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="halo_management_menu">HALO deck management ›</string>
-    <string name="halo_management_title">HALO deck management</string>
+    <string name="halo_management_menu">⚡ HALO options ›</string>
+    <string name="halo_management_title">⚡ HALO options</string>
     <string name="halo_deck_color_and_status">Color and status</string>
     <string name="halo_deck_status_normal">Normal</string>
     <string name="halo_deck_status_urgent">Urgent</string>
@@ -68,11 +68,11 @@
     <string name="halo_filter_only_favorites">Show only favorites</string>
     <string name="halo_filter_only_pinned">Show only pinned decks</string>
     <string name="halo_filter_only_protected">Show only protected decks</string>
-    <string name="halo_menu_color_status">● Color and status</string>
+    <string name="halo_menu_color_status">🎨 Color and status</string>
     <string name="halo_favorite_add">★ Add to favorites</string>
     <string name="halo_favorite_remove">★ Remove from favorites</string>
-    <string name="halo_pin_add">↑ Pin deck to top</string>
-    <string name="halo_pin_remove">↓ Unpin deck</string>
+    <string name="halo_pin_add">📌 Pin deck to top</string>
+    <string name="halo_pin_remove">📌 Unpin deck</string>
     <string name="halo_protect_add">🔒 Protect deck</string>
     <string name="halo_protect_remove">🔓 Unprotect deck</string>
     <string name="halo_select_toggle">Select or deselect active deck</string>
@@ -82,5 +82,11 @@
     <string name="halo_select_removed">Active deck selection cleared</string>
     <string name="halo_marker_selected">active selection</string>
     <string name="halo_menu_reset">↻ Reset deck</string>
+    <string name="halo_clear_personalization_action">🧹 Remove HALO customization</string>
+    <string name="halo_clear_personalization_title">Remove HALO customization?</string>
+    <string name="halo_clear_personalization_message">Pinned, favorite, protection, color and status indicators will be removed from this deck. Cards, content and study progress will not be changed.</string>
+    <string name="halo_clear_personalization_confirm">Remove</string>
+    <string name="halo_clear_personalization_done">HALO customization removed</string>
+    <string name="halo_clear_personalization_empty">This deck has no HALO customization</string>
     <item name="halo_deck_pulse_drawable_tag" type="id" />
 </resources>
