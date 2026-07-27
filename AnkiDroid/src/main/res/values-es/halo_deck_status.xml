@@ -1,7 +1,6 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
     <string name="halo_deck_color_and_status">Color y estado</string>
-    <string name="halo_deck_organize">Organización de mazos HALO</string>
     <string name="halo_deck_status_normal">Normal</string>
     <string name="halo_deck_status_urgent">Urgente</string>
     <string name="halo_deck_status_pending">Pendiente</string>
@@ -14,14 +13,9 @@
     <string name="halo_scope_title">Aplicar estado a</string>
     <string name="halo_scope_only_deck">Solo este mazo</string>
     <string name="halo_scope_with_subdecks">Este mazo y %1$d submazo(s)</string>
-    <string name="halo_organize_bulk">Aplicar estado a todos los mazos visibles</string>
     <string name="halo_organize_bulk_title">Estado para los mazos visibles</string>
-    <string name="halo_organize_undo">Deshacer el último cambio de estados</string>
-    <string name="halo_organize_export">Copiar configuración al portapapeles</string>
-    <string name="halo_organize_import">Importar configuración del portapapeles</string>
     <string name="halo_organize_visual">Ajustes visuales</string>
     <string name="halo_organize_clear">Borrar todos los estados de mazos</string>
-    <string name="halo_undo_result">Se restauraron %1$d mazo(s)</string>
     <string name="halo_exported_clipboard">Configuración HALO copiada</string>
     <string name="halo_import_invalid">El portapapeles no contiene una configuración HALO válida</string>
     <string name="halo_imported_count">Se importaron %1$d estado(s) de mazo</string>
@@ -49,7 +43,6 @@
     <string name="halo_hide_learned">Ocultar temporalmente los mazos Aprendidos</string>
     <string name="halo_hide_paused">Ocultar temporalmente los mazos Pausados</string>
     <string name="halo_favorites_first">Mostrar primero los favoritos HALO</string>
-    <string name="halo_organize_cleanup">Limpiar ajustes HALO de mazos eliminados</string>
     <string name="halo_cleanup_result">Se eliminaron %1$d estado(s), %2$d favorito(s), %3$d fijado(s), %4$d protegido(s) y %5$d referencia(s) reciente(s) huérfana(s)</string>
     <string name="halo_deck_accessibility_description_with_markers">%1$s, estado: %2$s, %3$s</string>
     <string name="halo_marker_favorite">favorito</string>
