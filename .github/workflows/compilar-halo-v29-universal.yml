@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   compilar:
-    name: Fabricar APK universal completo
+    name: Fabricar APK universal firmado
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -26,8 +26,26 @@ jobs:
           java-version: "21"
           cache: gradle
 
-      - name: Compilar aplicación completa
+      - name: Verificar clave de firma
         shell: bash
+        run: |
+          set -euo pipefail
+
+          test -f tools/fallback-release-keystore.jks
+
+          keytool -list \
+            -keystore tools/fallback-release-keystore.jks \
+            -storepass "Test@123" \
+            -alias "my-key"
+
+      - name: Compilar aplicación completa firmada
+        shell: bash
+        env:
+          KEYSTOREPATH: ${{ github.workspace }}/tools/fallback-release-keystore.jks
+          KEYSTOREPWD: Test@123
+          KSTOREPWD: Test@123
+          KEYALIAS: my-key
+          KEYPWD: Test@123
         run: |
           set -euo pipefail
           chmod +x gradlew
@@ -35,13 +53,13 @@ jobs:
           BUILD_TIME="$(date +%s%3N)"
 
           MINIFY_ENABLED=false \
-          ./gradlew assembleFullRelease \
+          ./gradlew :AnkiDroid:assembleFullRelease \
             -Duniversal-apk=true \
             -PbuildTime="$BUILD_TIME" \
             --no-daemon \
             --stacktrace
 
-      - name: Preparar APK
+      - name: Verificar APK antes de publicarlo
         shell: bash
         run: |
           set -euo pipefail
@@ -54,18 +72,49 @@ jobs:
             exit 1
           fi
 
+          BUILD_TOOLS="$(
+            find "$ANDROID_HOME/build-tools" \
+              -mindepth 1 \
+              -maxdepth 1 \
+              -type d |
+            sort -V |
+            tail -n 1
+          )"
+
+          APKSIGNER="$BUILD_TOOLS/apksigner"
+          ZIPALIGN="$BUILD_TOOLS/zipalign"
+
+          test -x "$APKSIGNER"
+          test -x "$ZIPALIGN"
+
+          echo "=== INTEGRIDAD ZIP ==="
+          unzip -t "$APK"
+
+          echo "=== ALINEACIÓN APK ==="
+          "$ZIPALIGN" -c -P 16 -v 4 "$APK"
+
+          echo "=== FIRMA APK ==="
           mkdir -p resultado
+
+          "$APKSIGNER" verify \
+            --verbose \
+            --print-certs \
+            "$APK" |
+            tee resultado/FIRMA_APK.txt
 
           cp "$APK" \
             resultado/AnkiDroid-HALO-V29-DEV1-universal.apk
 
+          cd resultado
+
           sha256sum \
-            resultado/AnkiDroid-HALO-V29-DEV1-universal.apk \
-            > resultado/SHA256SUMS.txt
+            AnkiDroid-HALO-V29-DEV1-universal.apk \
+            > SHA256SUMS.txt
 
-          ls -lh resultado
+          ls -lh
+          cat FIRMA_APK.txt
 
-      - name: Publicar APK
+      - name: Publicar APK verificado
         uses: actions/upload-artifact@v4
         with:
           name: AnkiDroid-HALO-V29-DEV1-universal
