@@ -1,0 +1,73 @@
+name: Compilar HALO V29 Universal
+
+on:
+  push:
+    branches:
+      - halo-v29-dev1-opciones-halo
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compilar:
+    name: Fabricar APK universal completo
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Descargar código V29
+        uses: actions/checkout@v4
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Compilar aplicación completa
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+
+          BUILD_TIME="$(date +%s%3N)"
+
+          MINIFY_ENABLED=false \
+          ./gradlew assembleFullRelease \
+            -Duniversal-apk=true \
+            -PbuildTime="$BUILD_TIME" \
+            --no-daemon \
+            --stacktrace
+
+      - name: Preparar APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK="AnkiDroid/build/outputs/apk/full/release/AnkiDroid-full-universal-release.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "No se encontró el APK esperado."
+            find AnkiDroid/build/outputs -type f 2>/dev/null || true
+            exit 1
+          fi
+
+          mkdir -p resultado
+
+          cp "$APK" \
+            resultado/AnkiDroid-HALO-V29-DEV1-universal.apk
+
+          sha256sum \
+            resultado/AnkiDroid-HALO-V29-DEV1-universal.apk \
+            > resultado/SHA256SUMS.txt
+
+          ls -lh resultado
+
+      - name: Publicar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnkiDroid-HALO-V29-DEV1-universal
+          path: resultado/*
+          if-no-files-found: error
