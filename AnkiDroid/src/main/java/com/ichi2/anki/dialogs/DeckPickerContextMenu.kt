@@ -70,6 +70,7 @@ class DeckPickerContextMenu : AnalyticsDialogFragment() {
     ) {
         RENAME_DECK(R.string.rename_deck),
         DECK_OPTIONS(R.string.menu__deck_options),
+        HALO_MANAGE(R.string.halo_management_menu),
         COLOR_AND_STATUS(R.string.halo_deck_color_and_status),
         HALO_FAVORITE(R.string.halo_favorite_toggle),
         HALO_PIN(R.string.halo_pin_toggle),

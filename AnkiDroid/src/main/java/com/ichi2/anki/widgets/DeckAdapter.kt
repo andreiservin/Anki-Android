@@ -61,6 +61,7 @@ class DeckAdapter(
     private val layoutInflater = LayoutInflater.from(context)
     private val haloDeckStatusStore = HaloDeckStatusStore(context)
     private var haloSourceData: List<DisplayDeckNode> = emptyList()
+    private var haloRefreshGeneration: Long = 0
     private val zeroCountColor: Int
     private val newCountColor: Int
     private val learnCountColor: Int
@@ -109,9 +110,9 @@ class DeckAdapter(
         // adapter's items so there wouldn't be an ui refresh just from using submitList()
         val forceRefresh = this.hasSubdecks != hasSubDecks
         this.hasSubdecks = hasSubDecks
-        haloSourceData = data
+        haloSourceData = data.toList()
         haloDeckStatusStore.clearSelectedDeckIfMissing(data.map { it.did }.toSet())
-        submitList(applyHaloOrganization(data))
+        submitList(applyHaloOrganization(haloSourceData))
         if (forceRefresh) notifyDataSetChanged()
     }
 
@@ -132,8 +133,17 @@ class DeckAdapter(
     }
 
     fun refreshHaloAll() {
-        submitList(applyHaloOrganization(haloSourceData)) {
-            notifyDataSetChanged()
+        val generation = ++haloRefreshGeneration
+        val refreshed = applyHaloOrganization(haloSourceData).toList()
+
+        // HALO state lives outside DisplayDeckNode, so DiffUtil cannot detect a favorite,
+        // pin, protection or active-deck change when the node itself is unchanged.
+        // Rebind immediately, then submit the reordered list and rebind once more.
+        notifyDataSetChanged()
+        if (currentList.map { it.did } == refreshed.map { it.did }) return
+
+        submitList(refreshed) {
+            if (generation == haloRefreshGeneration) notifyDataSetChanged()
         }
     }
 

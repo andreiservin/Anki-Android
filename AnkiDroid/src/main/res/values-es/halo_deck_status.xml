@@ -1,5 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
+    <string name="halo_management_menu">Gestión HALO del mazo ›</string>
+    <string name="halo_management_title">Gestión HALO del mazo</string>
     <string name="halo_deck_color_and_status">Color y estado</string>
     <string name="halo_deck_status_normal">Normal</string>
     <string name="halo_deck_status_urgent">Urgente</string>

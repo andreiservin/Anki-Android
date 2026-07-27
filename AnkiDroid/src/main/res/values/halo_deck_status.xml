@@ -1,5 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
+    <string name="halo_management_menu">HALO deck management ›</string>
+    <string name="halo_management_title">HALO deck management</string>
     <string name="halo_deck_color_and_status">Color and status</string>
     <string name="halo_deck_status_normal">Normal</string>
     <string name="halo_deck_status_urgent">Urgent</string>

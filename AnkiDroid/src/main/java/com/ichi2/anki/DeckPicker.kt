@@ -866,6 +866,10 @@ open class DeckPicker :
                 viewModel.openDeckOptions(deckId)
                 dismissAllDialogFragments()
             }
+            DeckPickerContextMenuOption.HALO_MANAGE -> {
+                Timber.i("ContextMenu: HALO deck management selected for deck %d", deckId)
+                showHaloDeckManagementDialog(deckId)
+            }
             DeckPickerContextMenuOption.COLOR_AND_STATUS -> {
                 Timber.i("ContextMenu: HALO color and status selected for deck %d", deckId)
                 showHaloDeckStatusDialog(deckId)
@@ -1079,6 +1083,28 @@ open class DeckPicker :
                 cardCount = plan.cardIds.size,
             )
             viewModel.reloadDeckCounts().join()
+        }
+    }
+
+    private fun showHaloDeckManagementDialog(deckId: DeckId) {
+        launchCatchingTask {
+            val isDynamic = withCol { decks.isFiltered(deckId) }
+            val options =
+                buildList {
+                    add(DeckPickerContextMenuOption.COLOR_AND_STATUS)
+                    add(DeckPickerContextMenuOption.HALO_FAVORITE)
+                    add(DeckPickerContextMenuOption.HALO_PIN)
+                    add(DeckPickerContextMenuOption.HALO_PROTECT)
+                    add(DeckPickerContextMenuOption.HALO_SELECT)
+                    if (!isDynamic) add(DeckPickerContextMenuOption.HALO_RESET_DECK)
+                }
+            val labels = options.map { it.label(this@DeckPicker, deckId) }.toTypedArray()
+            AlertDialog.Builder(this@DeckPicker)
+                .setTitle(R.string.halo_management_title)
+                .setItems(labels) { _, index ->
+                    handleContextMenuSelection(options[index], deckId)
+                }.setNegativeButton(R.string.dialog_cancel, null)
+                .show()
         }
     }
 

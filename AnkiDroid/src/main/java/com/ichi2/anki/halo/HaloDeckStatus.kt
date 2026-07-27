@@ -441,8 +441,8 @@ class HaloDeckStatusStore(context: Context) {
         val newValue = !currentValue
         val editor = preferences.edit()
         if (newValue) editor.putBoolean(key, true) else editor.remove(key)
-        editor.commit()
-        return newValue
+        val committed = editor.commit()
+        return if (committed) preferences.getBoolean(key, false) else currentValue
     }
 
     private fun deckKey(deckId: DeckId): String = "$DECK_PREFIX$deckId"
