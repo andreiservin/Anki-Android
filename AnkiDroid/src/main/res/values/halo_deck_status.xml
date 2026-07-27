@@ -85,7 +85,6 @@
     <string name="halo_clear_personalization_action">🧹 Remove HALO customization</string>
     <string name="halo_clear_personalization_title">Remove HALO customization?</string>
     <string name="halo_clear_personalization_message">Pinned, favorite, protection, color and status indicators will be removed from this deck. Cards, content and study progress will not be changed.</string>
-    <string name="halo_clear_personalization_confirm">Remove</string>
     <string name="halo_clear_personalization_done">HALO customization removed</string>
     <string name="halo_clear_personalization_empty">This deck has no HALO customization</string>
     <item name="halo_deck_pulse_drawable_tag" type="id" />

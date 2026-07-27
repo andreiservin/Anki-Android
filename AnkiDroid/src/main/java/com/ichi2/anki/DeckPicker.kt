@@ -1129,7 +1129,7 @@ open class DeckPicker :
         AlertDialog.Builder(this)
             .setTitle(R.string.halo_clear_personalization_title)
             .setMessage(R.string.halo_clear_personalization_message)
-            .setPositiveButton(R.string.halo_clear_personalization_confirm) { _, _ ->
+            .setPositiveButton(R.string.dialog_remove) { _, _ ->
                 clearHaloDeckPersonalization(deckId)
             }.setNegativeButton(R.string.dialog_cancel, null)
             .show()

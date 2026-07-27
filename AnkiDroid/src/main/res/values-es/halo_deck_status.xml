@@ -85,7 +85,6 @@
     <string name="halo_clear_personalization_action">🧹 Quitar personalización HALO</string>
     <string name="halo_clear_personalization_title">¿Quitar la personalización HALO?</string>
     <string name="halo_clear_personalization_message">Se eliminarán los indicadores de fijado, favorito, protección, color y estado de este mazo. Las tarjetas, el contenido y el progreso de estudio no se modificarán.</string>
-    <string name="halo_clear_personalization_confirm">Quitar</string>
     <string name="halo_clear_personalization_done">Personalización HALO eliminada</string>
     <string name="halo_clear_personalization_empty">Este mazo no tiene personalización HALO</string>
 </resources>
